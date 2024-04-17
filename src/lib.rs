@@ -3,7 +3,30 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error> {
+fn is_stories(path: impl AsRef<Path>) -> bool {
+    let Some(Some(mut split)) = path
+        .as_ref()
+        .file_name()
+        .map(|name| name.to_str().map(|name| name.split('.')))
+    else {
+        return false;
+    };
+    if let (Some(name), Some(ext)) = (split.next(), split.next()) {
+        return ext == "stories" && name.len() > 0;
+    };
+    false
+}
+
+fn is_tsx(path: impl AsRef<Path>) -> bool {
+    !is_stories(&path)
+        && path
+            .as_ref()
+            .extension()
+            .map(|ext| ext == "tsx")
+            .unwrap_or(false)
+}
+
+fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error> {
     let Ok(root) = read_dir(&root) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -34,14 +57,14 @@ pub fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Er
 #[cfg(test)]
 
 mod tests {
+    use super::*;
     use std::path::{Path, PathBuf};
 
-    fn make_test_dir(dir_name: &str) {
-        let sub_dir_name = format!("{}/sub_dir", dir_name);
-        std::fs::create_dir_all(&sub_dir_name).unwrap();
-        std::fs::write(format!("{}/main.rs", dir_name), "fn main() {}").unwrap();
-        std::fs::write(format!("{}/lib.rs", dir_name), "fn lib() {}").unwrap();
-        std::fs::write(format!("{}/main.py", sub_dir_name), "def main(): pass").unwrap();
+    fn create_dir_all(dir_name: &str) {
+        std::fs::create_dir_all(dir_name).unwrap();
+    }
+    fn create_file(file_name: &str, content: &str) {
+        std::fs::write(file_name, content).unwrap();
     }
     fn remove_dir(dir_name: &str) {
         let path: &Path = dir_name.as_ref();
@@ -50,9 +73,31 @@ mod tests {
         }
     }
     #[test]
+    fn test_is_stories() {
+        let dir_name = "test_all_file_path";
+        assert!(is_stories("test.stories.tsx"));
+        assert!(is_stories(format!("{dir_name}/test.stories.tsx")));
+        assert!(!is_stories("test.ts"));
+        assert!(!is_stories("test.rs"));
+        assert!(!is_stories("test.tsx"));
+    }
+    #[test]
+    fn test_is_tsx() {
+        let dir_name = "test_all_file_path2";
+        assert!(is_tsx("test.tsx"));
+        assert!(is_tsx(format!("{dir_name}/test.tsx")));
+        assert!(!is_tsx("test.ts"));
+        assert!(!is_tsx("test.rs"));
+        assert!(!is_tsx("test.stories.tsx"));
+    }
+    #[test]
     fn test_all_file_path() {
         let dir_name = "test_all_file_path";
-        make_test_dir(dir_name);
+        create_dir_all(format!("{dir_name}/sub_dir").as_str());
+        create_file(format!("{dir_name}/main.rs").as_str(), "");
+        create_file(format!("{dir_name}/lib.rs").as_str(), "");
+        create_file(format!("{dir_name}/sub_dir/main.py").as_str(), "");
+
         let files = super::all_file_path(dir_name).unwrap();
         remove_dir(dir_name);
         assert_eq!(files.len(), 3);
