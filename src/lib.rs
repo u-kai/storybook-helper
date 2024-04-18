@@ -21,7 +21,7 @@ impl StoryBookContent {
     }
     fn import_component(&self) -> String {
         format!(
-            r#"import {{ {} }} from "./{}\""#,
+            r#"import {{ {} }} from "./{}";"#,
             self.component.name, self.component.name
         )
     }
@@ -34,16 +34,35 @@ import { StoryFn } from "@storybook/react";"#
             r#"export default {{
     title: "{}",
     component: {},
-}}"#,
+}};"#,
             self.title, self.component.name
+        )
+    }
+    fn template(&self) -> String {
+        format!(
+            r#"const Template: StoryFn<{}> = (args) => (
+  <{} {{...args}} />
+);"#,
+            self.component.props_str(),
+            self.component.name
+        )
+    }
+    fn primary_sample(&self) -> String {
+        format!(
+            r#"export const Primary = Template.bind({{}});
+
+Primary.args = {};"#,
+            self.component.fill_sample()
         )
     }
     fn to_file_content(&self) -> String {
         format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n\n{}\n\n{}\n\n{}\n",
             self.import_libraries(),
             self.import_component(),
-            self.export_default()
+            self.export_default(),
+            self.template(),
+            self.primary_sample()
         )
     }
 }
@@ -102,6 +121,8 @@ fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error>
 #[cfg(test)]
 
 mod tests {
+    use crate::component::{ExpandProps, Key, NamedProps, Props, Type};
+
     use super::*;
     use std::path::{Path, PathBuf};
 
@@ -116,6 +137,37 @@ mod tests {
         if path.exists() {
             std::fs::remove_dir_all(dir_name).unwrap();
         }
+    }
+    #[test]
+    fn test_make_storybook_content() {
+        let mut props = ExpandProps::new();
+        props.insert(Key("timeOut".to_string()), Type::Number);
+        props.insert(Key("errorMessage".to_string()), Type::String);
+
+        let props = NamedProps::new("Props", props);
+        let component = Component::new("ErrorAlert", Props::Named(props));
+
+        let storybook_content = StoryBookContent::new("Sample/ErrorAlert", component);
+        assert_eq!(
+            storybook_content.to_file_content(),
+            r#"import React from "react";
+import { StoryFn } from "@storybook/react";
+import { ErrorAlert } from "./ErrorAlert";
+
+export default {
+    title: "Sample/ErrorAlert",
+    component: ErrorAlert,
+};
+
+const Template: StoryFn<Props> = (args) => (
+  <ErrorAlert {...args} />
+);
+
+export const Primary = Template.bind({});
+
+Primary.args = { errorMessage: "",timeOut: 0, };
+"#
+        );
     }
     #[test]
     fn test_is_stories() {
