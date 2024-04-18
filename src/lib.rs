@@ -3,6 +3,51 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use component::Component;
+mod component;
+mod parser;
+
+struct StoryBookContent {
+    title: String,
+    component: Component,
+}
+
+impl StoryBookContent {
+    fn new(title: impl Into<String>, component: Component) -> Self {
+        Self {
+            title: title.into(),
+            component,
+        }
+    }
+    fn import_component(&self) -> String {
+        format!(
+            r#"import {{ {} }} from "./{}\""#,
+            self.component.name, self.component.name
+        )
+    }
+    fn import_libraries(&self) -> &'static str {
+        r#"import React from "react";
+import { StoryFn } from "@storybook/react";"#
+    }
+    fn export_default(&self) -> String {
+        format!(
+            r#"export default {{
+    title: "{}",
+    component: {},
+}}"#,
+            self.title, self.component.name
+        )
+    }
+    fn to_file_content(&self) -> String {
+        format!(
+            "{}\n{}\n{}",
+            self.import_libraries(),
+            self.import_component(),
+            self.export_default()
+        )
+    }
+}
+
 fn is_stories(path: impl AsRef<Path>) -> bool {
     let Some(Some(mut split)) = path
         .as_ref()
