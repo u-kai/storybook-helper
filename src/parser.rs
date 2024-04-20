@@ -221,7 +221,30 @@ impl ComponentPartsParser<'_> {
         }
         None
     }
-
+    fn type_literal_to_type(&mut self, token: TSXToken) -> Type {
+        match token.token_type {
+            TSXTokenType::Ident => Type::Named(token.literal),
+            // case func
+            // (props:Props)=>Type;
+            // ()=>Type;
+            TSXTokenType::LParentheses => {
+                let mut next = self.lexer.next_token();
+                let mut type_value = String::from("(");
+                while next.token_type != TSXTokenType::RParentheses {
+                    type_value.push_str(&next.literal);
+                    next = self.lexer.next_token();
+                }
+                type_value.push_str(")");
+                let arrow = self.lexer.next_token();
+                assert_eq!(arrow.token_type, TSXTokenType::Arrow);
+                type_value.push_str(" => ");
+                let return_type = self.lexer.next_token();
+                type_value.push_str(&return_type.literal);
+                Type::Named(type_value)
+            }
+            _ => panic!("unexpected token {:?}", token),
+        }
+    }
     fn after_type_lcurl(&mut self, type_name: &str) {
         let mut type_value = ExpandProps::new();
         let mut key_or_rcurl = self.lexer.next_token();
@@ -241,10 +264,9 @@ impl ComponentPartsParser<'_> {
                 assert_eq!(colon.token_type, TSXTokenType::Colon);
             }
             let type_literal = self.lexer.next_token();
-            assert_eq!(type_literal.token_type, TSXTokenType::Ident);
             type_value.insert(
                 Key(key.literal.clone()),
-                Type::Named(type_literal.literal.clone()),
+                self.type_literal_to_type(type_literal),
             );
             let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
             match comma_or_semicolon_or_rcurl_or_key.token_type {
@@ -312,8 +334,9 @@ impl ComponentPartsParser<'_> {
                     Props::Named(NamedProps::new(type_name.literal, ExpandProps::new())),
                 ))
             }
-            TSXTokenType::Eq => {
-                let _lp = self.lexer.next_token();
+            TSXTokenType::Assign => {
+                let lp = self.lexer.next_token();
+                assert_eq!(lp.token_type, TSXTokenType::LParentheses);
                 self.from_props_lparen(component_name)
             }
             _ => None,
@@ -362,8 +385,8 @@ impl ComponentPartsParser<'_> {
                 key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
                 assert_eq!(colon.token_type, TSXTokenType::Colon);
             }
-
             let type_literal = self.lexer.next_token();
+            assert_eq!(type_literal.token_type, TSXTokenType::Ident);
             type_value.insert(
                 Key(key.literal.clone()),
                 Type::Named(type_literal.literal.clone()),
@@ -371,11 +394,19 @@ impl ComponentPartsParser<'_> {
             let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
             match comma_or_semicolon_or_rcurl_or_key.token_type {
                 TSXTokenType::Comma => {
-                    key = self.lexer.next_token();
+                    let key_or_rcurl = self.lexer.next_token();
+                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                        return Some(Component::new(component_name, Props::Expand(type_value)));
+                    }
+                    key = key_or_rcurl;
                     continue;
                 }
                 TSXTokenType::Semicolon => {
-                    key = self.lexer.next_token();
+                    let key_or_rcurl = self.lexer.next_token();
+                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                        return Some(Component::new(component_name, Props::Expand(type_value)));
+                    }
+                    key = key_or_rcurl;
                     continue;
                 }
                 TSXTokenType::Ident => {
@@ -385,7 +416,9 @@ impl ComponentPartsParser<'_> {
                 TSXTokenType::RCurlyBracket => {
                     return Some(Component::new(component_name, Props::Expand(type_value)));
                 }
-                _ => {}
+                _ => {
+                    panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
+                }
             }
         }
     }
@@ -836,6 +869,55 @@ export const ErrorAlert: FC<Props> = (props: Props) => {}
         );
         assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Eof, ""));
     }
+    #[test]
+    fn test_to_component3() {
+        let content = r#"
+import * as React from "react";
+import AddIcon from "@mui/icons-material/Add";
+import { Fab } from "@mui/material";
+
+type ButtonProps = {
+  handler: () => void;
+};
+
+export const RegisterButtons = (props: ButtonProps) => {
+  return (
+    <Fab color="primary" aria-label="add" size="small">
+      <AddIcon sx={{}} onClick={props.handler}></AddIcon>
+    </Fab>
+  );
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ExpandProps::new();
+        props.insert(
+            Key("handler".to_string()),
+            Type::Named("() => void".to_string()),
+        );
+        let expect = Component::new(
+            "RegisterButtons",
+            Props::Named(NamedProps::new("ButtonProps", props)),
+        );
+        assert_eq!(component.unwrap(), expect);
+    }
+
+    #[test]
+    fn test_to_component2() {
+        let content = r#"
+import React from "react";
+import { AppFooter } from "./elements/Footer";
+
+export const Footer = () => {
+  return <AppFooter></AppFooter>;
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let expect = Component::new("Footer", Props::Expand(ExpandProps::new()));
+        assert_eq!(component.unwrap(), expect);
+    }
+
     #[test]
     fn test_to_component() {
         let content = r#"

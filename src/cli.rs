@@ -19,6 +19,8 @@ impl Cli {
             .filter(|path| is_tsx(path))
             .try_for_each(|path| {
                 let content = TSXContent::from_file(&path)?;
+                println!("\n\n");
+                println!("{}", path.display());
                 let Some(component) = content.to_component() else {
                     return Ok(());
                 };
