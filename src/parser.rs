@@ -140,7 +140,7 @@ type ExportName = String;
 struct ComponentPartsParser<'a> {
     lexer: Lexer<'a>,
     // TSXContent内の型情報を全て確保しておくもの
-    type_buffer: HashMap<TypeName, Type>,
+    type_buffer: HashMap<TypeName, Props>,
     component_candidates: HashMap<ExportName, TypeName>,
 }
 
@@ -168,69 +168,111 @@ impl ComponentPartsParser<'_> {
                 // type TypeName = { KEY:TYPE }
                 TSXTokenType::Type => {
                     let type_name = self.lexer.next_token();
-                    let _assign = self.lexer.next_token();
-                    let _lcurl = self.lexer.next_token();
-                    let mut type_value = HashMap::new();
+                    let assign = self.lexer.next_token();
+                    assert_eq!(assign.token_type, TSXTokenType::Assign);
+                    let lcurl = self.lexer.next_token();
+                    assert_eq!(lcurl.token_type, TSXTokenType::LCurlyBracket);
+                    let mut type_value = ExpandProps::new();
                     let mut key = self.lexer.next_token();
                     loop {
-                        let _colon = self.lexer.next_token();
-                        let type_name = self.lexer.next_token();
-                        type_value.insert(key.literal.clone(), type_name.literal);
+                        let colon_or_question = self.lexer.next_token();
+                        if colon_or_question.token_type == TSXTokenType::Question {
+                            let colon = self.lexer.next_token();
+                            assert_eq!(colon.token_type, TSXTokenType::Colon);
+                        }
+                        let type_literal = self.lexer.next_token();
+                        assert_eq!(type_literal.token_type, TSXTokenType::Ident);
+                        type_value.insert(
+                            Key(key.literal.clone()),
+                            Type::Named(type_literal.literal.clone()),
+                        );
+                        println!("type_value {:?}", type_value);
                         let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
                         match comma_or_semicolon_or_rcurl_or_key.token_type {
                             TSXTokenType::Comma => {
-                                key = self.lexer.next_token();
+                                let key_or_rcurl = self.lexer.next_token();
+                                if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                                    self.type_buffer.insert(
+                                        type_name.literal.clone(),
+                                        Props::Named(NamedProps::new(
+                                            type_name.literal.clone(),
+                                            type_value,
+                                        )),
+                                    );
+                                    break;
+                                }
+                                key = key_or_rcurl;
                                 continue;
                             }
                             TSXTokenType::Semicolon => {
-                                key = self.lexer.next_token();
+                                let key_or_rcurl = self.lexer.next_token();
+                                if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                                    self.type_buffer.insert(
+                                        type_name.literal.clone(),
+                                        Props::Named(NamedProps::new(
+                                            type_name.literal.clone(),
+                                            type_value,
+                                        )),
+                                    );
+                                    break;
+                                }
+                                key = key_or_rcurl;
                                 continue;
-                            }
-                            TSXTokenType::RCurlyBracket => {
-                                key = self.lexer.next_token();
-                                break;
                             }
                             TSXTokenType::Ident => {
                                 key = comma_or_semicolon_or_rcurl_or_key;
                                 continue;
                             }
-                            _ => {}
+                            TSXTokenType::RCurlyBracket => {
+                                self.type_buffer.insert(
+                                    type_name.literal.clone(),
+                                    Props::Named(NamedProps::new(
+                                        type_name.literal.clone(),
+                                        type_value,
+                                    )),
+                                );
+                                break;
+                            }
+                            _ => {
+                                panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
+                            }
                         }
                     }
-                    // TODO
-                    //self.type_buffer.insert(type_name, type_value);
                 }
                 // export default function NAME(props:Props)
-                // export default const NAME
+                // export default const NAME = (props:Props) => {}
+                // export default const NAME:IDENT_TYPE<Type> = (props:Props) => {}
+                // export default const NAME = {}
+                // export default const NAME = "hoge"
+                // export default const NAME = 1
                 // export default NAME
                 // export const NAME
                 TSXTokenType::Export => {
                     let default_or_const_type = self.lexer.next_token();
+                    println!("default_or_const_type {:?}", default_or_const_type);
                     if default_or_const_type.token_type == TSXTokenType::Type {
                         continue;
                     }
                     let function_or_const_or_name = self.lexer.next_token();
+                    println!("function_or_const_or_name {:?}", function_or_const_or_name);
                     match function_or_const_or_name.token_type {
                         TSXTokenType::Fn => {
                             let name = self.lexer.next_token();
-                            return Some(Component::new(
-                                name.literal,
-                                Props::Expand(ExpandProps::new()),
-                            ));
+                            return self.from_props_lparen(name.literal.as_str());
                         }
                         TSXTokenType::Const => {
                             let name = self.lexer.next_token();
-                            return Some(Component::new(
-                                name.literal,
-                                Props::Expand(ExpandProps::new()),
-                            ));
+                            if let Some(component) = self.after_const_name(name.literal.as_str()) {
+                                return Some(component);
+                            };
+                            break;
                         }
                         TSXTokenType::Ident => {
                             let name = function_or_const_or_name;
-                            return Some(Component::new(
-                                name.literal,
-                                Props::Expand(ExpandProps::new()),
-                            ));
+                            if let Some(component) = self.after_const_name(name.literal.as_str()) {
+                                return Some(component);
+                            };
+                            break;
                         }
                         _ => {}
                     }
@@ -242,6 +284,96 @@ impl ComponentPartsParser<'_> {
             }
         }
         None
+    }
+    // export const NAME:FC<Type> = (props:Props) => {}
+    // export const NAME:VFC<Type> = (props:Props) => {}
+    // export const NAME = (props:Props) => {}
+    fn after_const_name(&mut self, component_name: &str) -> Option<Component> {
+        let colon_or_eq = self.lexer.next_token();
+        match colon_or_eq.token_type {
+            TSXTokenType::Colon => {
+                let type_name = self.lexer.next_token();
+                // Not React Component
+                if type_name.literal != "FC" {
+                    return None;
+                }
+                let _lt = self.lexer.next_token();
+                let type_name = self.lexer.next_token();
+                let props = self.type_buffer.remove(&type_name.literal);
+                if let Some(props) = props {
+                    return Some(Component::new(component_name, props));
+                }
+                Some(Component::new(
+                    component_name,
+                    Props::Named(NamedProps::new(type_name.literal, ExpandProps::new())),
+                ))
+            }
+            TSXTokenType::Eq => {
+                let _lp = self.lexer.next_token();
+                self.from_props_lparen(component_name)
+            }
+            _ => None,
+        }
+    }
+    fn from_props_lparen(&mut self, component_name: &str) -> Option<Component> {
+        let props_or_rpar = self.lexer.next_token();
+        // props なし
+        if props_or_rpar.token_type == TSXTokenType::RParentheses {
+            return Some(Component::new(
+                component_name,
+                Props::Expand(ExpandProps::new()),
+            ));
+        }
+        let _colon = self.lexer.next_token();
+        let props_name_or_lcurl = self.lexer.next_token();
+        if props_name_or_lcurl.token_type == TSXTokenType::Ident {
+            let props_name = props_name_or_lcurl;
+            let props = self.type_buffer.remove(&props_name.literal);
+            if let Some(props) = props {
+                return Some(Component::new(component_name, props));
+            }
+            return Some(Component::new(
+                component_name,
+                Props::Named(NamedProps::new(props_name.literal, ExpandProps::new())),
+            ));
+        }
+        // case props is expand
+        let key_or_rcurl = self.lexer.next_token();
+        if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+            return Some(Component::new(
+                component_name,
+                Props::Expand(ExpandProps::new()),
+            ));
+        }
+        let mut type_value = ExpandProps::new();
+        let mut key = key_or_rcurl;
+        loop {
+            let _colon = self.lexer.next_token();
+            let type_literal = self.lexer.next_token();
+            type_value.insert(
+                Key(key.literal.clone()),
+                Type::Named(type_literal.literal.clone()),
+            );
+            let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
+            match comma_or_semicolon_or_rcurl_or_key.token_type {
+                TSXTokenType::Comma => {
+                    key = self.lexer.next_token();
+                    continue;
+                }
+                TSXTokenType::Semicolon => {
+                    key = self.lexer.next_token();
+                    continue;
+                }
+                TSXTokenType::Ident => {
+                    key = comma_or_semicolon_or_rcurl_or_key;
+                    continue;
+                }
+                TSXTokenType::RCurlyBracket => {
+                    return Some(Component::new(component_name, Props::Expand(type_value)));
+                }
+                _ => {}
+            }
+        }
     }
 }
 struct Lexer<'a> {
@@ -723,9 +855,15 @@ export const ErrorAlert: FC<Props> = (props: Props) => {}
         let content = TSXContent(content.to_string());
         let component = content.to_component();
         let mut props = ExpandProps::new();
-        props.insert(Key("timeOut".to_string()), Type::Number);
-        props.insert(Key("errorMessage".to_string()), Type::String);
-        props.insert(Key("size".to_string()), Type::Number);
+        props.insert(
+            Key("timeOut".to_string()),
+            Type::Named("number".to_string()),
+        );
+        props.insert(
+            Key("errorMessage".to_string()),
+            Type::Named("string".to_string()),
+        );
+        props.insert(Key("size".to_string()), Type::Named("number".to_string()));
         let expect = Component::new("ErrorAlert", Props::Named(NamedProps::new("Props", props)));
 
         assert_eq!(component.unwrap(), expect);
