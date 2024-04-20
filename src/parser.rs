@@ -224,11 +224,20 @@ impl ComponentPartsParser<'_> {
 
     fn after_type_lcurl(&mut self, type_name: &str) {
         let mut type_value = ExpandProps::new();
-        let mut key = self.lexer.next_token();
+        let mut key_or_rcurl = self.lexer.next_token();
+        if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+            self.type_buffer.insert(
+                type_name.to_string(),
+                Props::Named(NamedProps::new(type_name, type_value)),
+            );
+            return;
+        }
+        let mut key = key_or_rcurl;
         loop {
             let colon_or_question = self.lexer.next_token();
             if colon_or_question.token_type == TSXTokenType::Question {
                 let colon = self.lexer.next_token();
+                key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
                 assert_eq!(colon.token_type, TSXTokenType::Colon);
             }
             let type_literal = self.lexer.next_token();
@@ -322,6 +331,7 @@ impl ComponentPartsParser<'_> {
         let colon = self.lexer.next_token();
         assert_eq!(colon.token_type, TSXTokenType::Colon);
         let props_name_or_lcurl = self.lexer.next_token();
+        // case props is named
         if props_name_or_lcurl.token_type == TSXTokenType::Ident {
             let props_name = props_name_or_lcurl;
             assert_eq!(props_name.token_type, TSXTokenType::Ident);
@@ -336,6 +346,7 @@ impl ComponentPartsParser<'_> {
         }
         // case props is expand
         let key_or_rcurl = self.lexer.next_token();
+        // case {}
         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
             return Some(Component::new(
                 component_name,
@@ -345,8 +356,13 @@ impl ComponentPartsParser<'_> {
         let mut type_value = ExpandProps::new();
         let mut key = key_or_rcurl;
         loop {
-            let colon = self.lexer.next_token();
-            assert_eq!(colon.token_type, TSXTokenType::Colon);
+            let colon_or_question = self.lexer.next_token();
+            if colon_or_question.token_type == TSXTokenType::Question {
+                let colon = self.lexer.next_token();
+                key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
+                assert_eq!(colon.token_type, TSXTokenType::Colon);
+            }
+
             let type_literal = self.lexer.next_token();
             type_value.insert(
                 Key(key.literal.clone()),
@@ -858,7 +874,7 @@ export const ErrorAlert: FC<Props> = (props: Props) => {}
             Type::Named("number".to_string()),
         );
         props.insert(
-            Key("errorMessage".to_string()),
+            Key("errorMessage?".to_string()),
             Type::Named("string".to_string()),
         );
         props.insert(Key("size".to_string()), Type::Named("number".to_string()));
