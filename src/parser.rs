@@ -168,76 +168,12 @@ impl ComponentPartsParser<'_> {
                 // type TypeName = { KEY:TYPE }
                 TSXTokenType::Type => {
                     let type_name = self.lexer.next_token();
+                    assert_eq!(type_name.token_type, TSXTokenType::Ident);
                     let assign = self.lexer.next_token();
                     assert_eq!(assign.token_type, TSXTokenType::Assign);
                     let lcurl = self.lexer.next_token();
                     assert_eq!(lcurl.token_type, TSXTokenType::LCurlyBracket);
-                    let mut type_value = ExpandProps::new();
-                    let mut key = self.lexer.next_token();
-                    loop {
-                        let colon_or_question = self.lexer.next_token();
-                        if colon_or_question.token_type == TSXTokenType::Question {
-                            let colon = self.lexer.next_token();
-                            assert_eq!(colon.token_type, TSXTokenType::Colon);
-                        }
-                        let type_literal = self.lexer.next_token();
-                        assert_eq!(type_literal.token_type, TSXTokenType::Ident);
-                        type_value.insert(
-                            Key(key.literal.clone()),
-                            Type::Named(type_literal.literal.clone()),
-                        );
-                        println!("type_value {:?}", type_value);
-                        let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
-                        match comma_or_semicolon_or_rcurl_or_key.token_type {
-                            TSXTokenType::Comma => {
-                                let key_or_rcurl = self.lexer.next_token();
-                                if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                                    self.type_buffer.insert(
-                                        type_name.literal.clone(),
-                                        Props::Named(NamedProps::new(
-                                            type_name.literal.clone(),
-                                            type_value,
-                                        )),
-                                    );
-                                    break;
-                                }
-                                key = key_or_rcurl;
-                                continue;
-                            }
-                            TSXTokenType::Semicolon => {
-                                let key_or_rcurl = self.lexer.next_token();
-                                if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                                    self.type_buffer.insert(
-                                        type_name.literal.clone(),
-                                        Props::Named(NamedProps::new(
-                                            type_name.literal.clone(),
-                                            type_value,
-                                        )),
-                                    );
-                                    break;
-                                }
-                                key = key_or_rcurl;
-                                continue;
-                            }
-                            TSXTokenType::Ident => {
-                                key = comma_or_semicolon_or_rcurl_or_key;
-                                continue;
-                            }
-                            TSXTokenType::RCurlyBracket => {
-                                self.type_buffer.insert(
-                                    type_name.literal.clone(),
-                                    Props::Named(NamedProps::new(
-                                        type_name.literal.clone(),
-                                        type_value,
-                                    )),
-                                );
-                                break;
-                            }
-                            _ => {
-                                panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
-                            }
-                        }
-                    }
+                    self.after_type_lcurl(type_name.literal.as_str());
                 }
                 // export default function NAME(props:Props)
                 // export default const NAME = (props:Props) => {}
@@ -285,6 +221,65 @@ impl ComponentPartsParser<'_> {
         }
         None
     }
+
+    fn after_type_lcurl(&mut self, type_name: &str) {
+        let mut type_value = ExpandProps::new();
+        let mut key = self.lexer.next_token();
+        loop {
+            let colon_or_question = self.lexer.next_token();
+            if colon_or_question.token_type == TSXTokenType::Question {
+                let colon = self.lexer.next_token();
+                assert_eq!(colon.token_type, TSXTokenType::Colon);
+            }
+            let type_literal = self.lexer.next_token();
+            assert_eq!(type_literal.token_type, TSXTokenType::Ident);
+            type_value.insert(
+                Key(key.literal.clone()),
+                Type::Named(type_literal.literal.clone()),
+            );
+            let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
+            match comma_or_semicolon_or_rcurl_or_key.token_type {
+                TSXTokenType::Comma => {
+                    let key_or_rcurl = self.lexer.next_token();
+                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                        self.type_buffer.insert(
+                            type_name.to_string(),
+                            Props::Named(NamedProps::new(type_name, type_value)),
+                        );
+                        break;
+                    }
+                    key = key_or_rcurl;
+                    continue;
+                }
+                TSXTokenType::Semicolon => {
+                    let key_or_rcurl = self.lexer.next_token();
+                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+                        self.type_buffer.insert(
+                            type_name.to_string(),
+                            Props::Named(NamedProps::new(type_name, type_value)),
+                        );
+                        break;
+                    }
+                    key = key_or_rcurl;
+                    continue;
+                }
+                TSXTokenType::Ident => {
+                    key = comma_or_semicolon_or_rcurl_or_key;
+                    continue;
+                }
+                TSXTokenType::RCurlyBracket => {
+                    self.type_buffer.insert(
+                        type_name.to_string(),
+                        Props::Named(NamedProps::new(type_name, type_value)),
+                    );
+                    break;
+                }
+                _ => {
+                    panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
+                }
+            }
+        }
+    }
     // export const NAME:FC<Type> = (props:Props) => {}
     // export const NAME:VFC<Type> = (props:Props) => {}
     // export const NAME = (props:Props) => {}
@@ -324,10 +319,12 @@ impl ComponentPartsParser<'_> {
                 Props::Expand(ExpandProps::new()),
             ));
         }
-        let _colon = self.lexer.next_token();
+        let colon = self.lexer.next_token();
+        assert_eq!(colon.token_type, TSXTokenType::Colon);
         let props_name_or_lcurl = self.lexer.next_token();
         if props_name_or_lcurl.token_type == TSXTokenType::Ident {
             let props_name = props_name_or_lcurl;
+            assert_eq!(props_name.token_type, TSXTokenType::Ident);
             let props = self.type_buffer.remove(&props_name.literal);
             if let Some(props) = props {
                 return Some(Component::new(component_name, props));
@@ -348,7 +345,8 @@ impl ComponentPartsParser<'_> {
         let mut type_value = ExpandProps::new();
         let mut key = key_or_rcurl;
         loop {
-            let _colon = self.lexer.next_token();
+            let colon = self.lexer.next_token();
+            assert_eq!(colon.token_type, TSXTokenType::Colon);
             let type_literal = self.lexer.next_token();
             type_value.insert(
                 Key(key.literal.clone()),
