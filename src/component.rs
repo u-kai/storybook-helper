@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Component {
     pub name: String,
     props: Props,
@@ -31,11 +32,13 @@ impl Component {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum Props {
     Named(NamedProps),
     Expand(ExpandProps),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct NamedProps {
     pub name: String,
     inner: ExpandProps,
@@ -53,6 +56,7 @@ impl NamedProps {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct ExpandProps {
     inner: BTreeMap<Key, Type>,
 }
@@ -85,6 +89,7 @@ impl ExpandProps {
 #[derive(Debug, Clone, PartialEq, Hash, PartialOrd, Ord, Eq)]
 pub(super) struct Key(pub String);
 
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum Type {
     Number,
     String,

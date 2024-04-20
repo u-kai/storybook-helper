@@ -1,3 +1,5 @@
+use storybook_helper::cli::Cli;
+
 fn main() {
-    println!("Hello, world!");
+    Cli::new().run().unwrap();
 }

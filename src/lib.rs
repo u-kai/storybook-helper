@@ -4,6 +4,7 @@ use std::{
 };
 
 use component::Component;
+pub mod cli;
 mod component;
 mod parser;
 
