@@ -19,7 +19,9 @@ impl Cli {
             .filter(|path| is_tsx(path))
             .try_for_each(|path| {
                 let content = TSXContent::from_file(&path)?;
-                let component = content.to_component();
+                let Some(component) = content.to_component() else {
+                    return Ok(());
+                };
                 let storybook = StoryBookContent::new(
                     format!("Example/{}", component.name.as_str()),
                     component,

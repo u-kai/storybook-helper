@@ -1,4 +1,4 @@
-use std::{path::Path, str::Chars};
+use std::{collections::HashMap, path::Path, str::Chars};
 
 use crate::component::{Component, ExpandProps, Key, NamedProps, Props, Type};
 
@@ -115,6 +115,10 @@ enum TSXTokenType {
     Import,
     Default,
     Arrow,
+    String,
+    Number,
+    Boolean,
+    Undefined,
 }
 
 pub(crate) struct TSXContent(String);
@@ -124,20 +128,122 @@ impl TSXContent {
         let content = std::fs::read_to_string(path)?;
         Ok(Self(content))
     }
-    pub fn to_component(&self) -> Component {
-        let props = self.to_props();
-        let name = self.to_component_name();
-        Component::new(name, props)
-    }
-    fn to_component_name(&self) -> String {
-        "ErrorAlert".to_string()
-        //self.component_name.to_string()
-    }
-    fn to_props(&self) -> Props {
-        Props::Expand(ExpandProps::new())
+    pub fn to_component(&self) -> Option<Component> {
+        let mut parser = ComponentPartsParser::new(self);
+        parser.search_component()
     }
 }
 
+type TypeName = String;
+type ExportName = String;
+
+struct ComponentPartsParser<'a> {
+    lexer: Lexer<'a>,
+    // TSXContent内の型情報を全て確保しておくもの
+    type_buffer: HashMap<TypeName, Type>,
+    component_candidates: HashMap<ExportName, TypeName>,
+}
+
+// 1. typeを探す
+// 2. componentを探す
+// 3. componentのpropsを探す
+// 4. propsの型を探す
+// TODO :一旦propsなしで
+
+impl ComponentPartsParser<'_> {
+    fn new(content: &TSXContent) -> ComponentPartsParser {
+        let lexer = Lexer::new(&content.0);
+        let type_buffer = HashMap::new();
+        ComponentPartsParser {
+            lexer,
+            type_buffer,
+            component_candidates: HashMap::new(),
+        }
+    }
+    // TODO: export されているcomponentの名前しか見つけてない
+    fn search_component(&mut self) -> Option<Component> {
+        loop {
+            let token = self.lexer.next_token();
+            match token.token_type {
+                // type TypeName = { KEY:TYPE }
+                TSXTokenType::Type => {
+                    let type_name = self.lexer.next_token();
+                    let _assign = self.lexer.next_token();
+                    let _lcurl = self.lexer.next_token();
+                    let mut type_value = HashMap::new();
+                    let mut key = self.lexer.next_token();
+                    loop {
+                        let _colon = self.lexer.next_token();
+                        let type_name = self.lexer.next_token();
+                        type_value.insert(key.literal.clone(), type_name.literal);
+                        let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
+                        match comma_or_semicolon_or_rcurl_or_key.token_type {
+                            TSXTokenType::Comma => {
+                                key = self.lexer.next_token();
+                                continue;
+                            }
+                            TSXTokenType::Semicolon => {
+                                key = self.lexer.next_token();
+                                continue;
+                            }
+                            TSXTokenType::RCurlyBracket => {
+                                key = self.lexer.next_token();
+                                break;
+                            }
+                            TSXTokenType::Ident => {
+                                key = comma_or_semicolon_or_rcurl_or_key;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    // TODO
+                    //self.type_buffer.insert(type_name, type_value);
+                }
+                // export default function NAME(props:Props)
+                // export default const NAME
+                // export default NAME
+                // export const NAME
+                TSXTokenType::Export => {
+                    let default_or_const_type = self.lexer.next_token();
+                    if default_or_const_type.token_type == TSXTokenType::Type {
+                        continue;
+                    }
+                    let function_or_const_or_name = self.lexer.next_token();
+                    match function_or_const_or_name.token_type {
+                        TSXTokenType::Fn => {
+                            let name = self.lexer.next_token();
+                            return Some(Component::new(
+                                name.literal,
+                                Props::Expand(ExpandProps::new()),
+                            ));
+                        }
+                        TSXTokenType::Const => {
+                            let name = self.lexer.next_token();
+                            return Some(Component::new(
+                                name.literal,
+                                Props::Expand(ExpandProps::new()),
+                            ));
+                        }
+                        TSXTokenType::Ident => {
+                            let name = function_or_const_or_name;
+                            return Some(Component::new(
+                                name.literal,
+                                Props::Expand(ExpandProps::new()),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                TSXTokenType::Eof => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
 struct Lexer<'a> {
     input: Chars<'a>,
     focus: char,
@@ -622,6 +728,6 @@ export const ErrorAlert: FC<Props> = (props: Props) => {}
         props.insert(Key("size".to_string()), Type::Number);
         let expect = Component::new("ErrorAlert", Props::Named(NamedProps::new("Props", props)));
 
-        assert_eq!(component, expect);
+        assert_eq!(component.unwrap(), expect);
     }
 }
