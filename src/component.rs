@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
+
+use crate::parser::ComponentPartsParser;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Component {
@@ -31,21 +33,33 @@ impl Component {
         }
     }
 }
+pub(crate) struct TSXContent(pub String);
+
+impl TSXContent {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(Self(content))
+    }
+    pub fn to_component(&self) -> Option<Component> {
+        let mut parser = ComponentPartsParser::new(self);
+        parser.search_component()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Props {
     Named(NamedProps),
-    Expand(ExpandProps),
+    Expand(ObjectType),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct NamedProps {
     pub name: String,
-    inner: ExpandProps,
+    inner: ObjectType,
 }
 
 impl NamedProps {
-    pub fn new(name: impl Into<String>, inner: ExpandProps) -> Self {
+    pub fn new(name: impl Into<String>, inner: ObjectType) -> Self {
         Self {
             name: name.into(),
             inner,
@@ -57,11 +71,11 @@ impl NamedProps {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct ExpandProps {
+pub(super) struct ObjectType {
     inner: BTreeMap<Key, Type>,
 }
 
-impl ExpandProps {
+impl ObjectType {
     pub fn new() -> Self {
         Self {
             inner: BTreeMap::new(),
@@ -95,7 +109,7 @@ pub(super) enum Type {
     String,
     Boolean,
     Array(Box<Type>),
-    Object(ExpandProps),
+    Object(ObjectType),
     Named(String),
 }
 
@@ -129,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_expand_str() {
-        let props = ExpandProps {
+        let props = ObjectType {
             inner: vec![
                 (Key("timeOut".to_string()), Type::Number),
                 (Key("errorMessage".to_string()), Type::String),

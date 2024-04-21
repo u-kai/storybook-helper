@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::{all_file_path, is_tsx, parser::TSXContent, StoryBookContent};
+use crate::{all_file_path, component::TSXContent, is_tsx, StoryBookContent};
 
 #[derive(Parser)]
 pub struct Cli {

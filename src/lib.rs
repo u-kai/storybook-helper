@@ -6,7 +6,9 @@ use std::{
 use component::Component;
 pub mod cli;
 mod component;
+mod lexer;
 mod parser;
+mod token;
 
 struct StoryBookContent {
     title: String,
@@ -122,7 +124,7 @@ fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error>
 #[cfg(test)]
 
 mod tests {
-    use crate::component::{ExpandProps, Key, NamedProps, Props, Type};
+    use crate::component::{Key, NamedProps, ObjectType, Props, Type};
 
     use super::*;
     use std::path::{Path, PathBuf};
@@ -141,7 +143,7 @@ mod tests {
     }
     #[test]
     fn test_make_storybook_content() {
-        let mut props = ExpandProps::new();
+        let mut props = ObjectType::new();
         props.insert(Key("timeOut".to_string()), Type::Number);
         props.insert(Key("errorMessage".to_string()), Type::String);
 

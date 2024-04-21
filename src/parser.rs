@@ -1,143 +1,15 @@
-use std::{collections::HashMap, path::Path, str::Chars};
+use std::collections::HashMap;
 
-use crate::component::{Component, ExpandProps, Key, NamedProps, Props, Type};
-
-/*
-
-import { Alert, AlertTitle } from "@mui/material";
-import React, { FC, useContext, useEffect } from "react";
-import { AppErrorContext } from "../../contexts/error";
-
-type Props = {
-  timeOut: number;
-  errorMessage?: string;
+use crate::{
+    component::{Component, Key, NamedProps, ObjectType, Props, TSXContent, Type},
+    lexer::Lexer,
+    token::{TSXToken, TSXTokenType},
 };
-
-// propsは何かしらの明示された型か、リテラルなタイプ、もしくは空か
-// 何かしらの明示された型であればその型のプロパティを再起的に拾ってくる必要がある
-// そのファイルのコンポーネントはexport defaultかexport constのどちらかで、export constである場合は、関数である可能性もあるので、それがコンポーネントであるのかどうかの判定は必要
-
-export const ErrorAlert: FC<Props> = (props: Props) => {
-  const { appError, setAppError } = useContext(AppErrorContext);
-  useEffect(() => {
-    if (appError !== undefined) {
-      setTimeout(() => {
-        setAppError(undefined);
-      }, props.timeOut);
-    }
-  }, [appError, setAppError]);
-
-  return (
-    <>
-      {appError !== undefined || props.errorMessage ? (
-        <Alert severity="error">
-          <AlertTitle>Error</AlertTitle>
-          {props.errorMessage ?? appError.message}
-        </Alert>
-      ) : null}
-    </>
-  );
-};
-*/
-
-#[derive(Debug, PartialEq)]
-struct TSXToken {
-    token_type: TSXTokenType,
-    literal: String,
-}
-impl TSXToken {
-    fn new(token_type: TSXTokenType, literal: impl Into<String>) -> Self {
-        Self {
-            token_type,
-            literal: literal.into(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum TSXTokenType {
-    Comment,
-    StartDocComment,
-    EndDocComment,
-    Increment,
-    Add,
-    Sub,
-    Colon,
-    Dot,
-    DoubleQuote,
-    SingleQuote,
-    CrossEqual,
-    From,
-    IncrementEqual,
-    DecrementEqual,
-    SlashEqual,
-    Decrement,
-    Assign,
-    Eof,
-    NumberLiteral,
-    Ident,
-    Plus,
-    Minus,
-    Bang,
-    Asterisk,
-    Slash,
-    LTag,
-    RTag,
-    CloseLTag,
-    CloseRTag,
-    LtEq,
-    GtEq,
-    Comma,
-    Semicolon,
-    LParentheses,
-    RParentheses,
-    LCurlyBracket,
-    RCurlyBracket,
-    LBracket,
-    RBracket,
-    Eq,
-    NotEq,
-    Fn,
-    True,
-    False,
-    If,
-    Else,
-    Return,
-    Let,
-    Var,
-    Const,
-    Question,
-    NullishCoalescing,
-    Type,
-    StringLiteral,
-    Class,
-    Export,
-    Import,
-    Default,
-    Arrow,
-    String,
-    Number,
-    Boolean,
-    Undefined,
-}
-
-pub(crate) struct TSXContent(String);
-
-impl TSXContent {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, std::io::Error> {
-        let content = std::fs::read_to_string(path)?;
-        Ok(Self(content))
-    }
-    pub fn to_component(&self) -> Option<Component> {
-        let mut parser = ComponentPartsParser::new(self);
-        parser.search_component()
-    }
-}
 
 type TypeName = String;
 type ExportName = String;
 
-struct ComponentPartsParser<'a> {
+pub(super) struct ComponentPartsParser<'a> {
     lexer: Lexer<'a>,
     // TSXContent内の型情報を全て確保しておくもの
     type_buffer: HashMap<TypeName, Props>,
@@ -151,7 +23,7 @@ struct ComponentPartsParser<'a> {
 // TODO :一旦propsなしで
 
 impl ComponentPartsParser<'_> {
-    fn new(content: &TSXContent) -> ComponentPartsParser {
+    pub fn new(content: &TSXContent) -> ComponentPartsParser {
         let lexer = Lexer::new(&content.0);
         let type_buffer = HashMap::new();
         ComponentPartsParser {
@@ -161,7 +33,7 @@ impl ComponentPartsParser<'_> {
         }
     }
     // TODO: export されているcomponentの名前しか見つけてない
-    fn search_component(&mut self) -> Option<Component> {
+    pub fn search_component(&mut self) -> Option<Component> {
         loop {
             let token = self.lexer.next_token();
             match token.token_type {
@@ -246,7 +118,7 @@ impl ComponentPartsParser<'_> {
         }
     }
     fn after_type_lcurl(&mut self, type_name: &str) {
-        let mut type_value = ExpandProps::new();
+        let mut type_value = ObjectType::new();
         let mut key_or_rcurl = self.lexer.next_token();
         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
             self.type_buffer.insert(
@@ -331,7 +203,7 @@ impl ComponentPartsParser<'_> {
                 }
                 Some(Component::new(
                     component_name,
-                    Props::Named(NamedProps::new(type_name.literal, ExpandProps::new())),
+                    Props::Named(NamedProps::new(type_name.literal, ObjectType::new())),
                 ))
             }
             TSXTokenType::Assign => {
@@ -348,7 +220,7 @@ impl ComponentPartsParser<'_> {
         if props_or_rpar.token_type == TSXTokenType::RParentheses {
             return Some(Component::new(
                 component_name,
-                Props::Expand(ExpandProps::new()),
+                Props::Expand(ObjectType::new()),
             ));
         }
         let colon = self.lexer.next_token();
@@ -364,7 +236,7 @@ impl ComponentPartsParser<'_> {
             }
             return Some(Component::new(
                 component_name,
-                Props::Named(NamedProps::new(props_name.literal, ExpandProps::new())),
+                Props::Named(NamedProps::new(props_name.literal, ObjectType::new())),
             ));
         }
         // case props is expand
@@ -373,10 +245,10 @@ impl ComponentPartsParser<'_> {
         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
             return Some(Component::new(
                 component_name,
-                Props::Expand(ExpandProps::new()),
+                Props::Expand(ObjectType::new()),
             ));
         }
-        let mut type_value = ExpandProps::new();
+        let mut type_value = ObjectType::new();
         let mut key = key_or_rcurl;
         loop {
             let colon_or_question = self.lexer.next_token();
@@ -387,6 +259,107 @@ impl ComponentPartsParser<'_> {
             }
             let type_literal = self.lexer.next_token();
             assert_eq!(type_literal.token_type, TSXTokenType::Ident);
+            let mut comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
+            while comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
+                != TSXTokenType::Comma
+                || comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
+                    != TSXTokenType::Semicolon
+                || comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
+                    != TSXTokenType::RCurlyBracket
+            {
+                if comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type == TSXTokenType::Dot
+                {
+                    let key = self.lexer.next_token();
+                    assert_eq!(key.token_type, TSXTokenType::Ident);
+                    let colon = self.lexer.next_token();
+                    assert_eq!(colon.token_type, TSXTokenType::Colon);
+                    let type_literal = self.lexer.next_token();
+                    assert_eq!(type_literal.token_type, TSXTokenType::Ident);
+                    comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
+                    continue;
+                }
+                if comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
+                    == TSXTokenType::LTag
+                {
+                    let key = self.lexer.next_token();
+                    assert_eq!(key.token_type, TSXTokenType::Ident);
+                    let colon = self.lexer.next_token();
+                    assert_eq!(colon.token_type, TSXTokenType::Colon);
+                    let type_literal = self.lexer.next_token();
+                    assert_eq!(type_literal.token_type, TSXTokenType::Ident);
+                    let _rtag = self.lexer.next_token();
+                    comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
+                    continue;
+                }
+            }
+
+            type_value.insert(
+                Key(key.literal.clone()),
+                Type::Named(type_literal.literal.clone()),
+            );
+            // match comma_or_semicolon_or_rcurl_or_key.token_type {
+            //     TSXTokenType::Comma => {
+            //         let key_or_rcurl = self.lexer.next_token();
+            //         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+            //             return Some(Component::new(component_name, Props::Expand(type_value)));
+            //         }
+            //         key = key_or_rcurl;
+            //         continue;
+            //     }
+            //     TSXTokenType::Semicolon => {
+            //         let key_or_rcurl = self.lexer.next_token();
+            //         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+            //             return Some(Component::new(component_name, Props::Expand(type_value)));
+            //         }
+            //         key = key_or_rcurl;
+            //         continue;
+            //     }
+            //     TSXTokenType::Ident => {
+            //         key = comma_or_semicolon_or_rcurl_or_key;
+            //         continue;
+            //     }
+            //     TSXTokenType::RCurlyBracket => {
+            //         return Some(Component::new(component_name, Props::Expand(type_value)));
+            //     }
+            //     _ => {
+            //         panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
+            //     }
+            // }
+        }
+        //fn after_colon_type_parser(&mut self) -> Option<Props> {}
+    }
+}
+
+// lexer state must after read type keyword
+struct TypeDefineParser<'a> {
+    lexer: &'a mut Lexer<'a>,
+}
+impl<'a> TypeDefineParser<'a> {
+    fn new(lexer: &'a mut Lexer<'a>) -> TypeDefineParser<'a> {
+        assert_eq!(lexer.next_token().token_type, TSXTokenType::Ident);
+        TypeDefineParser { lexer }
+    }
+    fn parse(&mut self) -> TypeDefine {
+        let type_name = self.lexer.next_token();
+        assert_eq!(type_name.token_type, TSXTokenType::Ident);
+        let assign = self.lexer.next_token();
+        assert_eq!(assign.token_type, TSXTokenType::Assign);
+        let lcurl = self.lexer.next_token();
+        assert_eq!(lcurl.token_type, TSXTokenType::LCurlyBracket);
+        let mut type_value = ObjectType::new();
+        let mut key_or_rcurl = self.lexer.next_token();
+        if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
+            return TypeDefine::new(type_name.literal, Type::Object(type_value));
+        }
+        let mut key = key_or_rcurl;
+        loop {
+            let colon_or_question = self.lexer.next_token();
+            if colon_or_question.token_type == TSXTokenType::Question {
+                let colon = self.lexer.next_token();
+                key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
+                assert_eq!(colon.token_type, TSXTokenType::Colon);
+            }
+            let type_literal = self.lexer.next_token();
             type_value.insert(
                 Key(key.literal.clone()),
                 Type::Named(type_literal.literal.clone()),
@@ -396,7 +369,7 @@ impl ComponentPartsParser<'_> {
                 TSXTokenType::Comma => {
                     let key_or_rcurl = self.lexer.next_token();
                     if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                        return Some(Component::new(component_name, Props::Expand(type_value)));
+                        return TypeDefine::new(type_name.literal, Type::Object(type_value));
                     }
                     key = key_or_rcurl;
                     continue;
@@ -404,7 +377,7 @@ impl ComponentPartsParser<'_> {
                 TSXTokenType::Semicolon => {
                     let key_or_rcurl = self.lexer.next_token();
                     if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                        return Some(Component::new(component_name, Props::Expand(type_value)));
+                        return TypeDefine::new(type_name.literal, Type::Object(type_value));
                     }
                     key = key_or_rcurl;
                     continue;
@@ -414,7 +387,7 @@ impl ComponentPartsParser<'_> {
                     continue;
                 }
                 TSXTokenType::RCurlyBracket => {
-                    return Some(Component::new(component_name, Props::Expand(type_value)));
+                    return TypeDefine::new(type_name.literal, Type::Object(type_value));
                 }
                 _ => {
                     panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
@@ -423,451 +396,59 @@ impl ComponentPartsParser<'_> {
         }
     }
 }
-struct Lexer<'a> {
-    input: Chars<'a>,
-    focus: char,
+
+// どういう関係かに限らず、型情報のパースが必要
+// 型情報は、type TYPE_NAME = の後か、
+// type_name:TYPE_NAMEか
+// type_name:EXPAND_TYPE
+//
+//
+#[derive(Debug, PartialEq)]
+struct TypeDefine {
+    type_name: TypeName,
+    type_value: Type,
 }
-impl Lexer<'_> {
-    fn new(input: &str) -> Lexer {
-        let input = input.chars();
-        let focus = ' ';
-        Lexer { input, focus }
-    }
-    fn char_to_token(ch: char) -> TSXToken {
-        match ch {
-            '+' => TSXToken::new(TSXTokenType::Plus, ch),
-            '?' => TSXToken::new(TSXTokenType::Question, ch),
-            '-' => TSXToken::new(TSXTokenType::Minus, ch),
-            '!' => TSXToken::new(TSXTokenType::Bang, ch),
-            '*' => TSXToken::new(TSXTokenType::Asterisk, ch),
-            '/' => TSXToken::new(TSXTokenType::Slash, ch),
-            '<' => TSXToken::new(TSXTokenType::LTag, ch),
-            '>' => TSXToken::new(TSXTokenType::RTag, ch),
-            ',' => TSXToken::new(TSXTokenType::Comma, ch),
-            ';' => TSXToken::new(TSXTokenType::Semicolon, ch),
-            '(' => TSXToken::new(TSXTokenType::LParentheses, ch),
-            ')' => TSXToken::new(TSXTokenType::RParentheses, ch),
-            '{' => TSXToken::new(TSXTokenType::LCurlyBracket, ch),
-            '}' => TSXToken::new(TSXTokenType::RCurlyBracket, ch),
-            '[' => TSXToken::new(TSXTokenType::LBracket, ch),
-            ']' => TSXToken::new(TSXTokenType::RBracket, ch),
-            '=' => TSXToken::new(TSXTokenType::Eq, ch),
-            ':' => TSXToken::new(TSXTokenType::Colon, ch),
-            c => TSXToken::new(TSXTokenType::Ident, c),
+impl TypeDefine {
+    fn new(type_name: impl Into<String>, type_value: Type) -> Self {
+        Self {
+            type_name: type_name.into(),
+            type_value,
         }
-    }
-    pub fn next_token(&mut self) -> TSXToken {
-        self.skip_whitespace();
-        match self.focus {
-            // effect only one char
-            ',' | ';' | '(' | ')' | '{' | '}' | ':' | '#' => {
-                let token = Self::char_to_token(self.focus);
-                self.set_next_char();
-                token
-            }
-
-            '!' => {
-                if self.set_next_char() && self.focus == '=' {
-                    self.set_next_char();
-                    TSXToken::new(TSXTokenType::NotEq, "!=")
-                } else {
-                    TSXToken::new(TSXTokenType::Bang, "!")
-                }
-            }
-            '?' => {
-                self.set_next_char();
-                match self.focus {
-                    '?' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::NullishCoalescing, "??")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Question, "?"),
-                }
-            }
-            '=' => {
-                self.set_next_char();
-                match self.focus {
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::Eq, "==")
-                    }
-                    '>' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::Arrow, "=>")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Assign, "="),
-                }
-            }
-            '<' => {
-                self.set_next_char();
-                match self.focus {
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::LtEq, "<=")
-                    }
-                    '/' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::CloseLTag, "</")
-                    }
-                    _ => TSXToken::new(TSXTokenType::LTag, "<"),
-                }
-            }
-            '>' => {
-                self.set_next_char();
-                match self.focus {
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::GtEq, ">=")
-                    }
-                    _ => TSXToken::new(TSXTokenType::RTag, ">"),
-                }
-            }
-            '/' => {
-                self.set_next_char();
-                match self.focus {
-                    '/' => TSXToken::new(TSXTokenType::Comment, self.read_comment()),
-                    '*' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::StartDocComment, "/*")
-                    }
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::SlashEqual, "/=")
-                    }
-                    '>' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::CloseRTag, "/>")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Slash, "/"),
-                }
-            }
-            '*' => {
-                self.set_next_char();
-                match self.focus {
-                    '/' => {
-                        self.set_next_char();
-                        let comment = self.read_doc_comment();
-                        TSXToken::new(TSXTokenType::EndDocComment, comment)
-                    }
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::CrossEqual, "*=")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Asterisk, "*"),
-                }
-            }
-            '+' => {
-                self.set_next_char();
-                match self.focus {
-                    '+' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::Increment, "++")
-                    }
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::IncrementEqual, "+=")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Add, "+"),
-                }
-            }
-            '-' => {
-                self.set_next_char();
-                match self.focus {
-                    '-' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::Decrement, "--")
-                    }
-                    '=' => {
-                        self.set_next_char();
-                        TSXToken::new(TSXTokenType::DecrementEqual, "-=")
-                    }
-                    _ => TSXToken::new(TSXTokenType::Sub, "-"),
-                }
-            }
-            '"' => {
-                let literal = self.read_string();
-                TSXToken::new(TSXTokenType::StringLiteral, literal)
-            }
-            '\'' => {
-                self.set_next_char();
-                let literal = self.read_string();
-                TSXToken::new(TSXTokenType::StringLiteral, literal)
-            }
-            c => {
-                if Self::is_letter(c) {
-                    let literal = self.read_word();
-                    return if let Some(token) = tsx_keywords(literal.as_str()) {
-                        token
-                    } else {
-                        TSXToken::new(TSXTokenType::Ident, literal)
-                    };
-                }
-                if Self::is_number(c) {
-                    let literal = self.read_number();
-                    TSXToken::new(TSXTokenType::NumberLiteral, literal)
-                } else {
-                    self.set_next_char();
-                    TSXToken::new(TSXTokenType::Eof, "")
-                }
-            }
-        }
-    }
-    fn skip_whitespace(&mut self) {
-        while self.focus.is_whitespace() && self.set_next_char() {}
-    }
-
-    // only use when focus is doc comment token
-    fn read_doc_comment(&mut self) -> String {
-        let mut comment = String::new();
-        while self.focus != '*' && self.set_next_char() {
-            comment.push(self.focus);
-        }
-        if self.set_next_char() && self.focus == '/' {
-            self.set_next_char();
-        }
-        comment
-    }
-    // only use when focus is comment token
-    fn read_comment(&mut self) -> String {
-        let mut comment = String::new();
-        while self.focus != '\n' && self.set_next_char() {
-            comment.push(self.focus);
-        }
-        comment
-    }
-    fn read_string(&mut self) -> String {
-        let mut string = String::new();
-        while self.set_next_char() && self.focus != '"' {
-            string.push(self.focus);
-        }
-        self.set_next_char();
-        string
-    }
-    fn read_word(&mut self) -> String {
-        let mut word = String::new();
-        // first char is letter(not number or symbol)
-        if Self::is_letter(self.focus) {
-            word.push(self.focus);
-            self.set_next_char();
-        }
-        // next char is letter or number
-        while Self::is_letter(self.focus) || Self::is_number(self.focus) {
-            word.push(self.focus);
-            self.set_next_char();
-        }
-        word
-    }
-    fn read_number(&mut self) -> String {
-        let mut number = String::new();
-        // next char is number
-        while Self::is_number(self.focus) {
-            number.push(self.focus);
-            self.set_next_char();
-        }
-        number
-    }
-    fn is_number(ch: char) -> bool {
-        ch.is_numeric()
-    }
-    fn is_letter(ch: char) -> bool {
-        ch.is_alphabetic() || ch == '_'
-    }
-    fn set_next_char(&mut self) -> bool {
-        if let Some(c) = self.input.next() {
-            self.focus = c;
-            true
-        } else {
-            self.focus = ' ';
-            false
-        }
-    }
-}
-
-fn tsx_keywords(s: &str) -> Option<TSXToken> {
-    match s {
-        "type" => Some(TSXToken::new(TSXTokenType::Type, s)),
-        "export" => Some(TSXToken::new(TSXTokenType::Export, s)),
-        "import" => Some(TSXToken::new(TSXTokenType::Import, s)),
-        "default" => Some(TSXToken::new(TSXTokenType::Default, s)),
-        "const" => Some(TSXToken::new(TSXTokenType::Const, s)),
-        "let" => Some(TSXToken::new(TSXTokenType::Let, s)),
-        "return" => Some(TSXToken::new(TSXTokenType::Return, s)),
-        "if" => Some(TSXToken::new(TSXTokenType::If, s)),
-        "else" => Some(TSXToken::new(TSXTokenType::Else, s)),
-        "true" => Some(TSXToken::new(TSXTokenType::True, s)),
-        "false" => Some(TSXToken::new(TSXTokenType::False, s)),
-        "function" => Some(TSXToken::new(TSXTokenType::Fn, s)),
-        "class" => Some(TSXToken::new(TSXTokenType::Class, s)),
-        "var" => Some(TSXToken::new(TSXTokenType::Var, s)),
-        "from" => Some(TSXToken::new(TSXTokenType::From, s)),
-        _ => None,
     }
 }
 
 #[cfg(test)]
-
 mod tests {
-    use crate::component::{ExpandProps, Key, NamedProps, Props, Type};
+    use crate::{
+        component::{Key, NamedProps, ObjectType, Props, Type},
+        lexer::Lexer,
+    };
 
     use super::*;
-    #[test]
-    fn test_lexer() {
-        let content = r#"
-import { Alert, AlertTitle } from "@mui/material";
 
+    #[test]
+    fn test_parse_type_define() {
+        let content = r#"
 type Props = {
-  timeOut: number;
-  errorMessage?: string;
-  size: number; 
+    timeOut: number;
+    errorMessage?: string;
 };
-export const ErrorAlert: FC<Props> = (props: Props) => {}
 "#;
         let mut lexer = Lexer::new(content);
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Import, "import")
+        let _type_ident = lexer.next_token();
+        let mut type_parser = TypeDefineParser::new(&mut lexer);
+        let type_define = type_parser.parse();
+        let mut expect_type = ObjectType::new();
+        expect_type.insert(
+            Key("timeOut".to_string()),
+            Type::Named("number".to_string()),
         );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::LCurlyBracket, "{")
+        expect_type.insert(
+            Key("errorMessage?".to_string()),
+            Type::Named("string".to_string()),
         );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "Alert")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Comma, ","));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "AlertTitle")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::RCurlyBracket, "}")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::From, "from")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::StringLiteral, "@mui/material")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Semicolon, ";")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Type, "type")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "Props")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Assign, "="));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::LCurlyBracket, "{")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "timeOut")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Colon, ":"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "number")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Semicolon, ";")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "errorMessage")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Question, "?")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Colon, ":"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "string")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Semicolon, ";")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "size")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Colon, ":"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "number")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Semicolon, ";")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::RCurlyBracket, "}")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Semicolon, ";")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Export, "export")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Const, "const")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "ErrorAlert")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Colon, ":"));
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Ident, "FC"));
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::LTag, "<"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "Props")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::RTag, ">"));
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Assign, "="));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::LParentheses, "(")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "props")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Colon, ":"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::Ident, "Props")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::RParentheses, ")")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Arrow, "=>"));
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::LCurlyBracket, "{")
-        );
-        assert_eq!(
-            lexer.next_token(),
-            TSXToken::new(TSXTokenType::RCurlyBracket, "}")
-        );
-        assert_eq!(lexer.next_token(), TSXToken::new(TSXTokenType::Eof, ""));
+        let expect_type = Type::Object(expect_type);
+        assert_eq!(type_define, TypeDefine::new("Props", expect_type));
     }
     #[test]
     fn test_to_component3() {
@@ -890,7 +471,7 @@ export const RegisterButtons = (props: ButtonProps) => {
 "#;
         let content = TSXContent(content.to_string());
         let component = content.to_component();
-        let mut props = ExpandProps::new();
+        let mut props = ObjectType::new();
         props.insert(
             Key("handler".to_string()),
             Type::Named("() => void".to_string()),
@@ -914,7 +495,7 @@ export const Footer = () => {
 "#;
         let content = TSXContent(content.to_string());
         let component = content.to_component();
-        let expect = Component::new("Footer", Props::Expand(ExpandProps::new()));
+        let expect = Component::new("Footer", Props::Expand(ObjectType::new()));
         assert_eq!(component.unwrap(), expect);
     }
 
@@ -950,7 +531,7 @@ export const Footer = () => {
     "#;
         let content = TSXContent(content.to_string());
         let component = content.to_component();
-        let mut props = ExpandProps::new();
+        let mut props = ObjectType::new();
         props.insert(
             Key("timeOut".to_string()),
             Type::Named("number".to_string()),
