@@ -14,6 +14,12 @@ impl Component {
             props,
         }
     }
+    pub fn props_name(&self) -> Option<&str> {
+        match &self.props {
+            Props::Named(props) => Some(&props.name),
+            Props::Expand(_) => None,
+        }
+    }
     pub fn props_str(&self) -> String {
         match &self.props {
             Props::Named(props) => props.name.clone(),

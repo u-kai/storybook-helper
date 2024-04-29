@@ -7,7 +7,6 @@ use crate::{
 };
 
 type TypeName = String;
-type ExportName = String;
 
 pub(super) struct ComponentPartsParser<'a> {
     lexer: Lexer<'a>,

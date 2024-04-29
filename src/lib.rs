@@ -22,11 +22,14 @@ impl StoryBookContent {
             component,
         }
     }
-    fn import_component(&self) -> String {
-        format!(
-            r#"import {{ {} }} from "./{}";"#,
-            self.component.name, self.component.name
-        )
+    fn import_component(&self, path: &str) -> String {
+        format!(r#"import {{ {} }} from "./{}";"#, self.component.name, path)
+    }
+    fn import_props(&self, path: &str) -> String {
+        match &self.component.props_name() {
+            Some(s) => format!(r#"import {{ {} }} from "./{}";"#, s, path),
+            None => "".to_string(),
+        }
     }
     fn import_libraries(&self) -> &'static str {
         r#"import React from "react";
@@ -58,16 +61,33 @@ Primary.args = {};"#,
             self.component.fill_sample()
         )
     }
-    fn to_file_content(&self) -> String {
+    fn to_file_content(&self, file_name: &str) -> String {
         format!(
-            "{}\n{}\n\n{}\n\n{}\n\n{}\n",
+            "{}\n{}\n{}\n{}\n\n{}\n\n{}\n",
             self.import_libraries(),
-            self.import_component(),
+            self.import_component(file_name),
+            self.import_props(file_name),
             self.export_default(),
             self.template(),
             self.primary_sample()
         )
     }
+}
+
+pub fn to_stories_path(path: impl AsRef<Path>) -> PathBuf {
+    let filename = path
+        .as_ref()
+        .file_name()
+        .map(|name| name.to_str().unwrap())
+        .unwrap();
+    let filename_without_ext = filename.split('.').next().unwrap();
+    let original_path_str = path.as_ref().to_str().unwrap();
+    original_path_str
+        .replace(
+            filename,
+            format!("{}.stories.tsx", filename_without_ext).as_str(),
+        )
+        .into()
 }
 
 fn is_stories(path: impl AsRef<Path>) -> bool {
