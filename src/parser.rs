@@ -175,8 +175,8 @@ impl ComponentPartsParser<'_> {
                 let arrow = self.lexer.next_token();
                 assert_eq!(arrow.token_type, TSXTokenType::Arrow);
                 type_value.push_str(" => ");
-                let return_type = self.lexer.next_token();
-                type_value.push_str(&return_type.literal);
+                let return_type_value = self.get_type_value();
+                type_value.push_str(&return_type_value.to_str());
                 Type::Named(type_value)
             }
             _ => panic!("unexpected token {:?}", type_value_token),
@@ -473,6 +473,38 @@ mod tests {
     };
 
     use super::*;
+    #[test]
+    fn test_to_func_generic() {
+        let content = r#"
+import * as React from "react";
+import AddIcon from "@mui/icons-material/Add";
+import { Fab } from "@mui/material";
+
+type ButtonProps = {
+  logout : () => Promise<void>;
+};
+
+export const RegisterButtons = (props: ButtonProps) => {
+  return (
+    <Fab color="primary" aria-label="add" size="small">
+      <AddIcon sx={{}} onClick={props.handler}></AddIcon>
+    </Fab>
+  );
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("logout".to_string()),
+            Type::Named("() => Promise<void>".to_string()),
+        );
+        let expect = Component::new(
+            "RegisterButtons",
+            Props::Named(NamedProps::new("ButtonProps", props)),
+        );
+        assert_eq!(component.unwrap(), expect);
+    }
 
     #[test]
     fn test_to_component4() {

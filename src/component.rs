@@ -404,7 +404,7 @@ impl Identifier {
 }
 
 impl Type {
-    fn to_str(&self) -> String {
+    pub fn to_str(&self) -> String {
         match self {
             Type::Number => "number".to_string(),
             Type::String => "string".to_string(),
