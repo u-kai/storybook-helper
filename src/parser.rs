@@ -279,6 +279,7 @@ impl ComponentPartsParser<'_> {
             }
         }
     }
+    // export const NAME:React.FC<Type> = (props:Props) => {}
     // export const NAME:FC<Type> = (props:Props) => {}
     // export const NAME:VFC<Type> = (props:Props) => {}
     // export const NAME = (props:Props) => {}
@@ -287,21 +288,37 @@ impl ComponentPartsParser<'_> {
         let colon_or_eq = self.lexer.next_token();
         match colon_or_eq.token_type {
             TSXTokenType::Colon => {
-                let type_name = self.lexer.next_token();
-                // Not React Component
-                if type_name.literal != "FC" {
-                    return None;
+                fn case_fc_or_vfc(
+                    this: &mut ComponentPartsParser,
+                    focus_token: &TSXToken,
+                    component_name: &str,
+                ) -> Option<Component> {
+                    if focus_token.literal == "FC" || focus_token.literal == "VFC" {
+                        let _lt = this.lexer.next_token();
+                        let type_name = this.lexer.next_token();
+                        let props = this.type_buffer.remove(&type_name.literal);
+                        if let Some(props) = props {
+                            return Some(Component::new(component_name, props));
+                        }
+                        return Some(Component::new(
+                            component_name,
+                            Props::Named(NamedProps::new(type_name.literal, ObjectType::new())),
+                        ));
+                    };
+                    None
                 }
-                let _lt = self.lexer.next_token();
                 let type_name = self.lexer.next_token();
-                let props = self.type_buffer.remove(&type_name.literal);
-                if let Some(props) = props {
-                    return Some(Component::new(component_name, props));
+                if let Some(component) = case_fc_or_vfc(self, &type_name, component_name) {
+                    return Some(component);
                 }
-                Some(Component::new(
-                    component_name,
-                    Props::Named(NamedProps::new(type_name.literal, ObjectType::new())),
-                ))
+                if type_name.literal == "React" {
+                    let _dot = self.lexer.next_token();
+                    let _fc_or_vfc = self.lexer.next_token();
+                    if let Some(component) = case_fc_or_vfc(self, &_fc_or_vfc, component_name) {
+                        return Some(component);
+                    }
+                }
+                None
             }
             TSXTokenType::Assign => {
                 let lp = self.lexer.next_token();
@@ -511,6 +528,30 @@ export const RegisterButtons = (props: ButtonProps) => {
         assert_eq!(component.unwrap(), expect);
     }
 
+    #[test]
+    fn test_to_react_dot_fc() {
+        let content = r#"
+import React from "react";
+import { AppFooter } from "./elements/Footer";
+
+export type Props = {
+  timeOut: number;
+};
+
+export const Footer:React.FC<Props> = (props) => {
+  return <AppFooter></AppFooter>;
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut obj = ObjectType::new();
+        obj.insert(
+            Key("timeOut".to_string()),
+            Type::Named("number".to_string()),
+        );
+        let expect = Component::new("Footer", Props::Named(NamedProps::new("Props", obj)));
+        assert_eq!(component.unwrap(), expect);
+    }
     #[test]
     fn test_to_component2() {
         let content = r#"
