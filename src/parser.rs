@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    component::{Component, Key, NamedProps, ObjectType, Props, TSXContent, Type},
+    component::{
+        Component, Key, NamedProps, ObjectType, Props, TSType, TSXContent, Type, UnionType,
+    },
     lexer::Lexer,
     token::{TSXToken, TSXTokenType},
 };
@@ -14,6 +16,7 @@ pub(super) struct ComponentPartsParser<'a> {
     // TSXContent内の型情報を全て確保しておくもの
     type_buffer: HashMap<TypeName, Props>,
     component_candidates: HashMap<ExportName, TypeName>,
+    peek: Option<TSXToken>,
 }
 
 // 1. typeを探す
@@ -30,6 +33,7 @@ impl ComponentPartsParser<'_> {
             lexer,
             type_buffer,
             component_candidates: HashMap::new(),
+            peek: None,
         }
     }
     // TODO: export されているcomponentの名前しか見つけてない
@@ -43,9 +47,13 @@ impl ComponentPartsParser<'_> {
                     assert_eq!(type_name.token_type, TSXTokenType::Ident);
                     let assign = self.lexer.next_token();
                     assert_eq!(assign.token_type, TSXTokenType::Assign);
-                    let lcurl = self.lexer.next_token();
-                    assert_eq!(lcurl.token_type, TSXTokenType::LCurlyBracket);
-                    self.after_type_lcurl(type_name.literal.as_str());
+                    let next = self.lexer.next_token();
+                    match next.token_type {
+                        TSXTokenType::LCurlyBracket => {
+                            self.after_type_lcurl(type_name.literal.as_str());
+                        }
+                        _ => {}
+                    }
                 }
                 // export default function NAME(props:Props)
                 // export default const NAME = (props:Props) => {}
@@ -57,12 +65,10 @@ impl ComponentPartsParser<'_> {
                 // export const NAME
                 TSXTokenType::Export => {
                     let default_or_const_type = self.lexer.next_token();
-                    println!("default_or_const_type {:?}", default_or_const_type);
                     if default_or_const_type.token_type == TSXTokenType::Type {
                         continue;
                     }
                     let function_or_const_or_name = self.lexer.next_token();
-                    println!("function_or_const_or_name {:?}", function_or_const_or_name);
                     match function_or_const_or_name.token_type {
                         TSXTokenType::Fn => {
                             let name = self.lexer.next_token();
@@ -93,9 +99,68 @@ impl ComponentPartsParser<'_> {
         }
         None
     }
-    fn type_literal_to_type(&mut self, token: TSXToken) -> Type {
-        match token.token_type {
-            TSXTokenType::Ident => Type::Named(token.literal),
+    fn get_type_value(&mut self) -> Type {
+        // key: type_value_token
+        let mut type_value_token = self.lexer.next_token();
+        match type_value_token.token_type {
+            TSXTokenType::Ident => {
+                // < or | or & or ; or } or , or ident(next key)
+                let next = self.lexer.next_token();
+                match next.token_type {
+                    TSXTokenType::Ident => {
+                        self.peek = Some(next);
+                        Type::Named(type_value_token.literal)
+                    }
+                    TSXTokenType::Semicolon | TSXTokenType::RCurlyBracket | TSXTokenType::Comma => {
+                        self.peek = Some(next);
+                        Type::Named(type_value_token.literal)
+                    }
+                    TSXTokenType::LTag => {
+                        type_value_token.literal.push_str("<");
+                        let mut next = self.lexer.next_token();
+                        let mut rest_ltag_count = 1;
+                        while next.token_type != TSXTokenType::RTag && rest_ltag_count != 0 {
+                            type_value_token.literal.push_str(&next.literal);
+                            next = self.lexer.next_token();
+                            if next.token_type == TSXTokenType::LTag {
+                                rest_ltag_count += 1;
+                            }
+                            if next.token_type == TSXTokenType::RTag {
+                                rest_ltag_count -= 1;
+                            }
+                        }
+                        type_value_token.literal.push_str(">");
+                        Type::Named(type_value_token.literal)
+                    }
+                    TSXTokenType::Pipe => {
+                        type_value_token.literal.push_str("|");
+                        let mut next = self.lexer.next_token();
+                        while next.token_type != TSXTokenType::Semicolon
+                            && next.token_type != TSXTokenType::RCurlyBracket
+                            && next.token_type != TSXTokenType::Comma
+                        {
+                            type_value_token.literal.push_str(&next.literal);
+                            next = self.lexer.next_token();
+                        }
+                        Type::Named(type_value_token.literal)
+                    }
+                    TSXTokenType::And => {
+                        type_value_token.literal.push_str("&");
+                        let mut next = self.lexer.next_token();
+                        while next.token_type != TSXTokenType::Semicolon
+                            && next.token_type != TSXTokenType::RCurlyBracket
+                            && next.token_type != TSXTokenType::Comma
+                        {
+                            type_value_token.literal.push_str(&next.literal);
+                            next = self.lexer.next_token();
+                        }
+                        Type::Named(type_value_token.literal)
+                    }
+                    _ => {
+                        panic!("unexpected token {:?}", next)
+                    }
+                }
+            }
             // case func
             // (props:Props)=>Type;
             // ()=>Type;
@@ -114,12 +179,12 @@ impl ComponentPartsParser<'_> {
                 type_value.push_str(&return_type.literal);
                 Type::Named(type_value)
             }
-            _ => panic!("unexpected token {:?}", token),
+            _ => panic!("unexpected token {:?}", type_value_token),
         }
     }
     fn after_type_lcurl(&mut self, type_name: &str) {
         let mut type_value = ObjectType::new();
-        let mut key_or_rcurl = self.lexer.next_token();
+        let key_or_rcurl = self.lexer.next_token();
         if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
             self.type_buffer.insert(
                 type_name.to_string(),
@@ -129,18 +194,24 @@ impl ComponentPartsParser<'_> {
         }
         let mut key = key_or_rcurl;
         loop {
+            println!("key {:?}", key);
             let colon_or_question = self.lexer.next_token();
             if colon_or_question.token_type == TSXTokenType::Question {
                 let colon = self.lexer.next_token();
                 key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
                 assert_eq!(colon.token_type, TSXTokenType::Colon);
             }
-            let type_literal = self.lexer.next_token();
-            type_value.insert(
-                Key(key.literal.clone()),
-                self.type_literal_to_type(type_literal),
-            );
-            let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
+            println!("colon_or_question {:?}", colon_or_question);
+            let type_literal = self.get_type_value();
+            println!("type_literal {:?}", type_literal);
+            type_value.insert(Key(key.literal.clone()), type_literal);
+
+            let comma_or_semicolon_or_rcurl_or_key = if self.peek.is_some() {
+                let token = self.peek.take().unwrap();
+                token
+            } else {
+                self.lexer.next_token()
+            };
             match comma_or_semicolon_or_rcurl_or_key.token_type {
                 TSXTokenType::Comma => {
                     let key_or_rcurl = self.lexer.next_token();
@@ -177,6 +248,12 @@ impl ComponentPartsParser<'_> {
                     );
                     break;
                 }
+                // not implement yet
+                TSXTokenType::LTag
+                | TSXTokenType::RTag
+                | TSXTokenType::Or
+                | TSXTokenType::Pipe
+                | TSXTokenType::And => {}
                 _ => {
                     panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
                 }
@@ -330,126 +407,147 @@ impl ComponentPartsParser<'_> {
     }
 }
 
-// lexer state must after read type keyword
-struct TypeDefineParser<'a> {
+// lexer state must after read type keyword and type name and assign
+struct TSTypeParser<'a> {
+    // パラメータ時の無名な時も解析可能にしたいので、型名は含めない方がいい気がしてきた
+    //type_name: String,
     lexer: &'a mut Lexer<'a>,
+    peek: Option<TSXToken>,
 }
-impl<'a> TypeDefineParser<'a> {
-    fn new(lexer: &'a mut Lexer<'a>) -> TypeDefineParser<'a> {
-        assert_eq!(lexer.next_token().token_type, TSXTokenType::Ident);
-        TypeDefineParser { lexer }
-    }
-    fn parse(&mut self) -> TypeDefine {
-        let type_name = self.lexer.next_token();
-        assert_eq!(type_name.token_type, TSXTokenType::Ident);
-        let assign = self.lexer.next_token();
-        assert_eq!(assign.token_type, TSXTokenType::Assign);
-        let lcurl = self.lexer.next_token();
-        assert_eq!(lcurl.token_type, TSXTokenType::LCurlyBracket);
-        let mut type_value = ObjectType::new();
-        let mut key_or_rcurl = self.lexer.next_token();
-        if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-            return TypeDefine::new(type_name.literal, Type::Object(type_value));
-        }
-        let mut key = key_or_rcurl;
-        loop {
-            let colon_or_question = self.lexer.next_token();
-            if colon_or_question.token_type == TSXTokenType::Question {
-                let colon = self.lexer.next_token();
-                key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
-                assert_eq!(colon.token_type, TSXTokenType::Colon);
-            }
-            let type_literal = self.lexer.next_token();
-            type_value.insert(
-                Key(key.literal.clone()),
-                Type::Named(type_literal.literal.clone()),
-            );
-            let comma_or_semicolon_or_rcurl_or_key = self.lexer.next_token();
-            match comma_or_semicolon_or_rcurl_or_key.token_type {
-                TSXTokenType::Comma => {
-                    let key_or_rcurl = self.lexer.next_token();
-                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                        return TypeDefine::new(type_name.literal, Type::Object(type_value));
-                    }
-                    key = key_or_rcurl;
-                    continue;
-                }
-                TSXTokenType::Semicolon => {
-                    let key_or_rcurl = self.lexer.next_token();
-                    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                        return TypeDefine::new(type_name.literal, Type::Object(type_value));
-                    }
-                    key = key_or_rcurl;
-                    continue;
-                }
-                TSXTokenType::Ident => {
-                    key = comma_or_semicolon_or_rcurl_or_key;
-                    continue;
-                }
-                TSXTokenType::RCurlyBracket => {
-                    return TypeDefine::new(type_name.literal, Type::Object(type_value));
-                }
-                _ => {
-                    panic!("unexpected token {:?}", comma_or_semicolon_or_rcurl_or_key)
-                }
-            }
-        }
-    }
-}
-
-// どういう関係かに限らず、型情報のパースが必要
-// 型情報は、type TYPE_NAME = の後か、
-// type_name:TYPE_NAMEか
-// type_name:EXPAND_TYPE
+//impl<'a> TSTypeParser<'a> {
+//    fn new(lexer: &'a mut Lexer<'a>) -> Self {
+//        Self {
+//            lexer,
+//            peek: None,
+//        }
+//    }
 //
+//    // TypeName = <TSType>
+//    fn parse(&mut self) -> Option<TSType> {
+//        // parse type
+//        let start_type_token = self.lexer.next_token();
+//        match start_type_token.token_type {
+//            // case string literal
+//            TSXTokenType::DoubleQuote => {}
+//            TSXTokenType::SingleQuote => {} // case
+//        }
+//    }
+//    fn case_string_literal(&mut self, delimiter: TSXTokenType) -> (TSType, Option<TSXToken>) {
+//        let type_literal = self.lexer.next_token();
+//        assert_eq!(type_literal.token_type, TSXTokenType::Ident);
 //
-#[derive(Debug, PartialEq)]
-struct TypeDefine {
-    type_name: TypeName,
-    type_value: Type,
-}
-impl TypeDefine {
-    fn new(type_name: impl Into<String>, type_value: Type) -> Self {
-        Self {
-            type_name: type_name.into(),
-            type_value,
-        }
-    }
-}
+//        let double_quote = self.lexer.next_token();
+//        assert_eq!(double_quote.token_type, delimiter);
+//
+//        let literal = TSType::Literal(format!(
+//            "{}{}{}",
+//            delimiter.to_str(),
+//            type_literal.literal,
+//            delimiter.to_str()
+//        ));
+//        let next = self.lexer.next_token();
+//        match next.token_type {
+//            TSXTokenType::Comma => (literal, None),
+//            TSXTokenType::Semicolon => (literal, None),
+//            TSXTokenType::RCurlyBracket => (literal, None),
+//            TSXTokenType::Ident => (literal, Some(next)),
+//            // case union
+//            TSXTokenType::Pipe => {
+//                let mut union = UnionType::new();
+//                union.push(literal);
+//                let
+//            }
+//            _ => panic!("unexpected token {:?}", next),
+//        }
+//    }
+//}
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        component::{Key, NamedProps, ObjectType, Props, Type},
+        component::{
+            Identifier, Key, NamedProps, ObjectType, ObjectTypes, PrimitiveType, Property, Props,
+            Type,
+        },
         lexer::Lexer,
     };
 
     use super::*;
 
     #[test]
-    fn test_parse_type_define() {
+    fn test_to_component4() {
         let content = r#"
-type Props = {
-    timeOut: number;
-    errorMessage?: string;
+import * as React from "react";
+import AddIcon from "@mui/icons-material/Add";
+import { Fab } from "@mui/material";
+
+type ButtonProps = {
+  generics: React<Hoge>
+  noGenerics: React
+};
+
+export const RegisterButtons = (props: ButtonProps) => {
+  return (
+    <Fab color="primary" aria-label="add" size="small">
+      <AddIcon sx={{}} onClick={props.handler}></AddIcon>
+    </Fab>
+  );
 };
 "#;
-        let mut lexer = Lexer::new(content);
-        let _type_ident = lexer.next_token();
-        let mut type_parser = TypeDefineParser::new(&mut lexer);
-        let type_define = type_parser.parse();
-        let mut expect_type = ObjectType::new();
-        expect_type.insert(
-            Key("timeOut".to_string()),
-            Type::Named("number".to_string()),
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("generics".to_string()),
+            Type::Named("React<Hoge>".to_string()),
         );
-        expect_type.insert(
-            Key("errorMessage?".to_string()),
-            Type::Named("string".to_string()),
+        props.insert(
+            Key("noGenerics".to_string()),
+            Type::Named("React".to_string()),
         );
-        let expect_type = Type::Object(expect_type);
-        assert_eq!(type_define, TypeDefine::new("Props", expect_type));
+        let expect = Component::new(
+            "RegisterButtons",
+            Props::Named(NamedProps::new("ButtonProps", props)),
+        );
+        assert_eq!(component.unwrap(), expect);
     }
+
+    //    #[test]
+    //    fn test_parse_type_define() {
+    //        let content = r#"
+    //type Props = {
+    //    timeOut: number;
+    //    errorMessage?: string;
+    //    generic: React<>;
+    //    union: string | number;
+    //};
+    //"#;
+    //        let mut lexer = Lexer::new(content);
+    //        let _type_ident = lexer.next_token();
+    //        let _type_name = lexer.next_token();
+    //        let _assign = lexer.next_token();
+    //
+    //        let mut type_parser = TSTypeParser::new(&mut lexer);
+    //        let type_define = type_parser.parse();
+    //        let mut expect_type = ObjectTypes::new();
+    //        expect_type.push(Property::new(
+    //            Identifier::new("timeOut"),
+    //            TSType::Primitive(PrimitiveType::Number),
+    //        ));
+    //        expect_type.push(Property::new(
+    //            Identifier::new("errorMessage?"),
+    //            TSType::Primitive(PrimitiveType::String),
+    //        ));
+    //        expect_type.push(Property::new(
+    //            Identifier::new("genericFn"),
+    //            TSType::Function(FunctionType::new(
+    //                vec![Type::Named("T".to_string())],
+    //                Type::Named("T".to_string()),
+    //            )),
+    //        ));
+    //        let expect_type = TSType::Object(expect_type);
+    //        assert_eq!(type_define, expect_type);
+    //    }
     #[test]
     fn test_to_component3() {
         let content = r#"
