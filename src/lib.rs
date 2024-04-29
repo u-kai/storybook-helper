@@ -172,11 +172,11 @@ mod tests {
 
         let storybook_content = StoryBookContent::new("Sample/ErrorAlert", component);
         assert_eq!(
-            storybook_content.to_file_content(),
+            storybook_content.to_file_content("ErrorAlert"),
             r#"import React from "react";
 import { StoryFn } from "@storybook/react";
 import { ErrorAlert } from "./ErrorAlert";
-
+import { Props } from "./ErrorAlert";
 export default {
     title: "Sample/ErrorAlert",
     component: ErrorAlert,

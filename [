@@ -204,19 +204,10 @@ impl ComponentPartsParser<'_> {
             TSXTokenType::LParentheses => {
                 let mut next = self.lexer.next_token();
                 let mut type_value = String::from("(");
-                let mut count = 1;
-                while next.token_type != TSXTokenType::RParentheses && count != 0 {
+                let count = 1;
+                while next.token_type != TSXTokenType::RParentheses {
                     type_value.push_str(&next.literal);
                     next = self.lexer.next_token();
-                    match next.token_type {
-                        TSXTokenType::LParentheses => {
-                            count += 1;
-                        }
-                        TSXTokenType::RParentheses => {
-                            count -= 1;
-                        }
-                        _ => {}
-                    }
                 }
                 type_value.push_str(")");
                 let arrow = self.lexer.next_token();
