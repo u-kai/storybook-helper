@@ -98,6 +98,17 @@ impl ComponentPartsParser<'_> {
     }
     // :を取得したタイミングで利用する
     fn get_type_value(&mut self, ltag_num: usize) -> Type {
+        fn add_after_type_literal(this: &mut ComponentPartsParser, token: &mut TSXToken) {
+            let mut next = this.lexer.next_token();
+            while next.token_type != TSXTokenType::Semicolon
+                && next.token_type != TSXTokenType::RCurlyBracket
+                && next.token_type != TSXTokenType::Comma
+            {
+                token.literal.push_str(&next.literal);
+                next = this.lexer.next_token();
+            }
+        }
+
         // key: type_value_token
         let mut type_value_token = self.lexer.next_token();
         match type_value_token.token_type {
@@ -130,18 +141,21 @@ impl ComponentPartsParser<'_> {
                             }
                             TSXTokenType::RTag => {
                                 return if ltag_num == 2 {
+                                    type_value_token.literal.push_str(">");
                                     let next = self.lexer.next_token();
                                     match next.token_type {
                                         TSXTokenType::Semicolon | TSXTokenType::Comma => {}
                                         TSXTokenType::Ident | TSXTokenType::RCurlyBracket => {
                                             self.peek = Some(next);
                                         }
+                                        TSXTokenType::Pipe => {
+                                            type_value_token.literal.push_str("|");
+                                            add_after_type_literal(self, &mut type_value_token);
+                                        }
                                         _ => {
                                             panic!("unexpected token {:?}", next)
                                         }
                                     }
-
-                                    type_value_token.literal.push_str(">");
                                     Type::Named(type_value_token.literal)
                                 } else {
                                     self.get_type_value(ltag_num - 2)
@@ -167,26 +181,12 @@ impl ComponentPartsParser<'_> {
                     }
                     TSXTokenType::Pipe => {
                         type_value_token.literal.push_str("|");
-                        let mut next = self.lexer.next_token();
-                        while next.token_type != TSXTokenType::Semicolon
-                            && next.token_type != TSXTokenType::RCurlyBracket
-                            && next.token_type != TSXTokenType::Comma
-                        {
-                            type_value_token.literal.push_str(&next.literal);
-                            next = self.lexer.next_token();
-                        }
+                        add_after_type_literal(self, &mut type_value_token);
                         Type::Named(type_value_token.literal)
                     }
                     TSXTokenType::And => {
                         type_value_token.literal.push_str("&");
-                        let mut next = self.lexer.next_token();
-                        while next.token_type != TSXTokenType::Semicolon
-                            && next.token_type != TSXTokenType::RCurlyBracket
-                            && next.token_type != TSXTokenType::Comma
-                        {
-                            type_value_token.literal.push_str(&next.literal);
-                            next = self.lexer.next_token();
-                        }
+                        add_after_type_literal(self, &mut type_value_token);
                         Type::Named(type_value_token.literal)
                     }
                     _ => {
@@ -235,39 +235,13 @@ impl ComponentPartsParser<'_> {
             }
             let type_literal = self.get_type_value(0);
             type_value.insert(Key(key.literal.clone()), type_literal);
-            println!("type_value {:?}", type_value);
             let key_or_rcurl = if self.peek.is_some() {
                 let token = self.peek.take().unwrap();
                 token
             } else {
                 self.lexer.next_token()
             };
-            println!("key_or_rcurl {:?}", key_or_rcurl);
             match key_or_rcurl.token_type {
-                //TSXTokenType::Comma => {
-                //    let key_or_rcurl = self.lexer.next_token();
-                //    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                //        self.type_buffer.insert(
-                //            type_name.to_string(),
-                //            Props::Named(NamedProps::new(type_name, type_value)),
-                //        );
-                //        break;
-                //    }
-                //    key = key_or_rcurl;
-                //    continue;
-                //}
-                //TSXTokenType::Semicolon => {
-                //    let key_or_rcurl = self.lexer.next_token();
-                //    if key_or_rcurl.token_type == TSXTokenType::RCurlyBracket {
-                //        self.type_buffer.insert(
-                //            type_name.to_string(),
-                //            Props::Named(NamedProps::new(type_name, type_value)),
-                //        );
-                //        break;
-                //    }
-                //    key = key_or_rcurl;
-                //    continue;
-                //}
                 TSXTokenType::Ident => {
                     key = key_or_rcurl;
                     continue;
@@ -361,7 +335,6 @@ impl ComponentPartsParser<'_> {
         let mut key = key_or_rcurl;
         let mut obj = ObjectType::new();
         while key.token_type != TSXTokenType::RCurlyBracket {
-            println!("key {:?}", key);
             let colon_or_question = self.lexer.next_token();
             let obj_key = if colon_or_question.token_type == TSXTokenType::Question {
                 let colon = self.lexer.next_token();
@@ -376,56 +349,6 @@ impl ComponentPartsParser<'_> {
         }
 
         Some(Component::new(component_name, Props::Expand(obj)))
-        //let mut type_value = ObjectType::new();
-        //let mut key = key_or_rcurl;
-        //loop {
-        //    let colon_or_question = self.lexer.next_token();
-        //    if colon_or_question.token_type == TSXTokenType::Question {
-        //        let colon = self.lexer.next_token();
-        //        key = TSXToken::new(TSXTokenType::Ident, format!("{}?", key.literal));
-        //        assert_eq!(colon.token_type, TSXTokenType::Colon);
-        //    }
-        //    let type_literal = self.lexer.next_token();
-        //    assert_eq!(type_literal.token_type, TSXTokenType::Ident);
-        //    let mut comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
-        //    while comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
-        //        != TSXTokenType::Comma
-        //        || comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
-        //            != TSXTokenType::Semicolon
-        //        || comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
-        //            != TSXTokenType::RCurlyBracket
-        //    {
-        //        if comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type == TSXTokenType::Dot
-        //        {
-        //            let key = self.lexer.next_token();
-        //            assert_eq!(key.token_type, TSXTokenType::Ident);
-        //            let colon = self.lexer.next_token();
-        //            assert_eq!(colon.token_type, TSXTokenType::Colon);
-        //            let type_literal = self.lexer.next_token();
-        //            assert_eq!(type_literal.token_type, TSXTokenType::Ident);
-        //            comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
-        //            continue;
-        //        }
-        //        if comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag.token_type
-        //            == TSXTokenType::LTag
-        //        {
-        //            let key = self.lexer.next_token();
-        //            assert_eq!(key.token_type, TSXTokenType::Ident);
-        //            let colon = self.lexer.next_token();
-        //            assert_eq!(colon.token_type, TSXTokenType::Colon);
-        //            let type_literal = self.lexer.next_token();
-        //            assert_eq!(type_literal.token_type, TSXTokenType::Ident);
-        //            let _rtag = self.lexer.next_token();
-        //            comma_or_semicolon_or_rcurl_or_key_or_dot_or_ltag = self.lexer.next_token();
-        //            continue;
-        //        }
-        //    }
-
-        //    type_value.insert(
-        //        Key(key.literal.clone()),
-        //        Type::Named(type_literal.literal.clone()),
-        //    );
-        //
     }
 }
 
@@ -434,6 +357,40 @@ mod tests {
     use crate::component::{Key, NamedProps, ObjectType, Props, Type};
 
     use super::*;
+    #[test]
+    fn test_to_union_generic() {
+        let content = r#"
+import * as React from "react";
+import AddIcon from "@mui/icons-material/Add";
+import { Fab } from "@mui/material";
+
+export const DeleteConfirmModal = (props: {
+  deleteHandler: () => Promise<void>;
+  setOpen: React.Dispatch<React.SetStateAction<boolean>> | union;
+  open: boolean;
+}) => {
+  return (
+    <Fab color="primary" aria-label="add" size="small">
+      <AddIcon sx={{}} onClick={props.handler}></AddIcon>
+    </Fab>
+  );
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("deleteHandler".to_string()),
+            Type::Named("() => Promise<void>".to_string()),
+        );
+        props.insert(Key("open".to_string()), Type::Named("boolean".to_string()));
+        props.insert(
+            Key("setOpen".to_string()),
+            Type::Named("React.Dispatch<React.SetStateAction<boolean>>|union".to_string()),
+        );
+        let expect = Component::new("DeleteConfirmModal", Props::Expand(props));
+        assert_eq!(component.unwrap(), expect);
+    }
     #[test]
     fn test_to_func_generic() {
         let content = r#"
