@@ -36,6 +36,7 @@ impl Lexer<'_> {
             '"' => TSXToken::new(TSXTokenType::DoubleQuote, ch),
             '\'' => TSXToken::new(TSXTokenType::SingleQuote, ch),
             '|' => TSXToken::new(TSXTokenType::Pipe, ch),
+            '&' => TSXToken::new(TSXTokenType::And, ch),
             c => TSXToken::new(TSXTokenType::Ident, c),
         }
     }
@@ -43,7 +44,7 @@ impl Lexer<'_> {
         self.skip_whitespace();
         match self.focus {
             // effect only one char
-            ',' | ';' | '(' | ')' | '{' | '}' | ':' | '#' | '.' => {
+            ',' | ';' | '(' | ')' | '{' | '}' | ':' | '#' | '.' | '&' => {
                 let token = Self::char_to_token(self.focus);
                 self.set_next_char();
                 token

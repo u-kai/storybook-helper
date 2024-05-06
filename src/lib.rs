@@ -144,7 +144,7 @@ fn all_file_path(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error>
 #[cfg(test)]
 
 mod tests {
-    use crate::component::{Key, NamedProps, ObjectType, Props, Type};
+    use crate::component::{Key, NamedProps, ObjectType, PrimitiveType, Props, Type};
 
     use super::*;
     use std::path::{Path, PathBuf};
@@ -164,8 +164,14 @@ mod tests {
     #[test]
     fn test_make_storybook_content() {
         let mut props = ObjectType::new();
-        props.insert(Key("timeOut".to_string()), Type::Number);
-        props.insert(Key("errorMessage".to_string()), Type::String);
+        props.insert(
+            Key("timeOut".to_string()),
+            Type::Primitive(PrimitiveType::Number),
+        );
+        props.insert(
+            Key("errorMessage".to_string()),
+            Type::Primitive(PrimitiveType::String),
+        );
 
         let props = NamedProps::new("Props", props);
         let component = Component::new("ErrorAlert", Props::Named(props));

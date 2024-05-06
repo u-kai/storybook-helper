@@ -33,11 +33,7 @@ impl ComponentPartsParser<'_> {
     // TODO: export されているcomponentの名前しか見つけてない
     pub fn search_component(&mut self) -> Option<Component> {
         loop {
-            let token = if self.peek.is_some() {
-                self.peek.take().unwrap()
-            } else {
-                self.lexer.next_token()
-            };
+            let token = self.peek.take().unwrap_or_else(|| self.lexer.next_token());
             match token.token_type {
                 // type TypeName = { KEY:TYPE }
                 TSXTokenType::Type => {
@@ -122,14 +118,14 @@ impl ComponentPartsParser<'_> {
                 match next.token_type {
                     TSXTokenType::Ident | TSXTokenType::RCurlyBracket => {
                         self.peek = Some(next);
-                        Type::Named(type_value_token.literal)
+                        Type::Alias(type_value_token.literal)
                     }
                     TSXTokenType::Semicolon | TSXTokenType::Comma => {
-                        Type::Named(type_value_token.literal)
+                        Type::Alias(type_value_token.literal)
                     }
                     TSXTokenType::Dot => {
                         let after_type_value = self.get_type_value(ltag_num);
-                        Type::Named(format!(
+                        Type::Alias(format!(
                             "{}.{}",
                             type_value_token.literal,
                             after_type_value.to_str()
@@ -160,7 +156,7 @@ impl ComponentPartsParser<'_> {
                                             panic!("unexpected token {:?}", next)
                                         }
                                     }
-                                    Type::Named(type_value_token.literal)
+                                    Type::Alias(type_value_token.literal)
                                 } else {
                                     self.get_type_value(ltag_num - 2)
                                 };
@@ -170,7 +166,7 @@ impl ComponentPartsParser<'_> {
                             }
                         };
                         if ltag_num == 1 {
-                            Type::Named(type_value_token.literal)
+                            Type::Alias(type_value_token.literal)
                         } else {
                             self.get_type_value(ltag_num - 1)
                         }
@@ -181,17 +177,17 @@ impl ComponentPartsParser<'_> {
                         type_value_token
                             .literal
                             .push_str(&after_type_value_token.to_str());
-                        Type::Named(type_value_token.literal)
+                        Type::Alias(type_value_token.literal)
                     }
                     TSXTokenType::Pipe => {
                         type_value_token.literal.push_str("|");
                         add_after_type_literal(self, &mut type_value_token);
-                        Type::Named(type_value_token.literal)
+                        Type::Alias(type_value_token.literal)
                     }
                     TSXTokenType::And => {
                         type_value_token.literal.push_str("&");
                         add_after_type_literal(self, &mut type_value_token);
-                        Type::Named(type_value_token.literal)
+                        Type::Alias(type_value_token.literal)
                     }
                     _ => {
                         panic!("unexpected token {:?}", next)
@@ -224,7 +220,7 @@ impl ComponentPartsParser<'_> {
                 type_value.push_str(" => ");
                 let return_type_value = self.get_type_value(0);
                 type_value.push_str(&return_type_value.to_str());
-                Type::Named(type_value)
+                Type::Alias(type_value)
             }
             _ => panic!("unexpected token {:?}", type_value_token),
         }
@@ -249,18 +245,43 @@ impl ComponentPartsParser<'_> {
             }
             let type_literal = self.get_type_value(0);
             type_value.insert(Key(key.literal.clone()), type_literal);
-            let key_or_rcurl = if self.peek.is_some() {
-                let token = self.peek.take().unwrap();
-                token
-            } else {
-                self.lexer.next_token()
-            };
+
+            let key_or_rcurl = self.peek.take().unwrap_or_else(|| self.lexer.next_token());
             match key_or_rcurl.token_type {
                 TSXTokenType::Ident => {
                     key = key_or_rcurl;
                     continue;
                 }
                 TSXTokenType::RCurlyBracket => {
+                    self.peek = Some(self.lexer.next_token());
+                    while Some(TSXTokenType::Semicolon)
+                        == self.peek.as_ref().map(|t| t.token_type.clone())
+                    {
+                        self.peek = Some(self.lexer.next_token());
+                    }
+                    match self.peek.as_ref().map(|t| t.token_type.clone()) {
+                        Some(TSXTokenType::Pipe) => {
+                            self.lexer.next_token();
+                        }
+                        Some(TSXTokenType::And) => {
+                            let indent = self.lexer.next_token();
+                            assert_eq!(indent.token_type, TSXTokenType::Ident);
+                            // TODO:全然できてない.一つだけの&であればOK
+                            // それ以外はpanic
+                            self.type_buffer.insert(
+                                type_name.to_string(),
+                                Props::Named(NamedProps::new_intersection_type(
+                                    type_name,
+                                    vec![
+                                        Type::Object(type_value),
+                                        Type::Alias(indent.literal.clone()),
+                                    ],
+                                )),
+                            );
+                            break;
+                        }
+                        _ => {}
+                    }
                     self.type_buffer.insert(
                         type_name.to_string(),
                         Props::Named(NamedProps::new(type_name, type_value)),
@@ -386,6 +407,51 @@ impl ComponentPartsParser<'_> {
 #[cfg(test)]
 mod tests {
     use crate::component::{Key, NamedProps, ObjectType, Props, Type};
+    #[test]
+    fn test_to_and_type() {
+        let content = r#"
+import React from "react";
+import { InputField, InputFieldProps } from "./InputField";
+import { styled } from "styled-components";
+
+export type InputFieldWithButtonProps = {
+  button: React.ReactNode;
+} & InputFieldProps;
+
+export const InputFieldWithButton = (props: InputFieldWithButtonProps) => {
+  return (
+    <Container>
+      <InputField {...props} />
+      {props.button}
+    </Container>
+  );
+};
+
+const Container = styled.div`
+  display: flex;
+  flex-direction: row;
+  position: relative;
+`;
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("button".to_string()),
+            Type::Alias("React.ReactNode".to_string()),
+        );
+        let expect = Component::new(
+            "InputFieldWithButton",
+            Props::Named(NamedProps::new_intersection_type(
+                "InputFieldWithButtonProps",
+                vec![
+                    Type::Object(props),
+                    Type::Alias("InputFieldProps".to_string()),
+                ],
+            )),
+        );
+        assert_eq!(component.unwrap(), expect);
+    }
 
     use super::*;
     #[test]
@@ -412,12 +478,12 @@ export const DeleteConfirmModal = (props: {
         let mut props = ObjectType::new();
         props.insert(
             Key("deleteHandler".to_string()),
-            Type::Named("() => Promise<void>".to_string()),
+            Type::Alias("() => Promise<void>".to_string()),
         );
-        props.insert(Key("open".to_string()), Type::Named("boolean".to_string()));
+        props.insert(Key("open".to_string()), Type::Alias("boolean".to_string()));
         props.insert(
             Key("setOpen".to_string()),
-            Type::Named("React.Dispatch<React.SetStateAction<boolean>>|union".to_string()),
+            Type::Alias("React.Dispatch<React.SetStateAction<boolean>>|union".to_string()),
         );
         let expect = Component::new("DeleteConfirmModal", Props::Expand(props));
         assert_eq!(component.unwrap(), expect);
@@ -446,12 +512,12 @@ export const DeleteConfirmModal = (props: {
         let mut props = ObjectType::new();
         props.insert(
             Key("deleteHandler".to_string()),
-            Type::Named("() => Promise<void>".to_string()),
+            Type::Alias("() => Promise<void>".to_string()),
         );
-        props.insert(Key("open".to_string()), Type::Named("boolean".to_string()));
+        props.insert(Key("open".to_string()), Type::Alias("boolean".to_string()));
         props.insert(
             Key("setOpen".to_string()),
-            Type::Named("React.Dispatch<React.SetStateAction<boolean>>".to_string()),
+            Type::Alias("React.Dispatch<React.SetStateAction<boolean>>".to_string()),
         );
         let expect = Component::new("DeleteConfirmModal", Props::Expand(props));
         assert_eq!(component.unwrap(), expect);
@@ -482,15 +548,15 @@ export const RegisterButtons = (props: ButtonProps) => {
         let mut props = ObjectType::new();
         props.insert(
             Key("generics".to_string()),
-            Type::Named("React<Hoge>".to_string()),
+            Type::Alias("React<Hoge>".to_string()),
         );
         props.insert(
             Key("noGenerics".to_string()),
-            Type::Named("React".to_string()),
+            Type::Alias("React".to_string()),
         );
         let expect = Component::new(
             "RegisterButtons",
-            Props::Named(NamedProps::new("ButtonProps", props)),
+            Props::Named(NamedProps::new_object_type("ButtonProps", props)),
         );
         assert_eq!(component.unwrap(), expect);
     }
@@ -519,11 +585,11 @@ export const RegisterButtons = (props: ButtonProps) => {
         let mut props = ObjectType::new();
         props.insert(
             Key("handler".to_string()),
-            Type::Named("() => void".to_string()),
+            Type::Alias("() => void".to_string()),
         );
         let expect = Component::new(
             "RegisterButtons",
-            Props::Named(NamedProps::new("ButtonProps", props)),
+            Props::Named(NamedProps::new_object_type("ButtonProps", props)),
         );
         assert_eq!(component.unwrap(), expect);
     }
@@ -547,9 +613,12 @@ export const Footer:React.FC<Props> = (props) => {
         let mut obj = ObjectType::new();
         obj.insert(
             Key("timeOut".to_string()),
-            Type::Named("number".to_string()),
+            Type::Alias("number".to_string()),
         );
-        let expect = Component::new("Footer", Props::Named(NamedProps::new("Props", obj)));
+        let expect = Component::new(
+            "Footer",
+            Props::Named(NamedProps::new_object_type("Props", obj)),
+        );
         assert_eq!(component.unwrap(), expect);
     }
     #[test]
@@ -603,14 +672,17 @@ export const Footer = () => {
         let mut props = ObjectType::new();
         props.insert(
             Key("timeOut".to_string()),
-            Type::Named("number".to_string()),
+            Type::Alias("number".to_string()),
         );
         props.insert(
             Key("errorMessage?".to_string()),
-            Type::Named("string".to_string()),
+            Type::Alias("string".to_string()),
         );
-        props.insert(Key("size".to_string()), Type::Named("number".to_string()));
-        let expect = Component::new("ErrorAlert", Props::Named(NamedProps::new("Props", props)));
+        props.insert(Key("size".to_string()), Type::Alias("number".to_string()));
+        let expect = Component::new(
+            "ErrorAlert",
+            Props::Named(NamedProps::new_object_type("Props", props)),
+        );
 
         assert_eq!(component.unwrap(), expect);
     }

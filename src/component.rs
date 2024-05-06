@@ -34,7 +34,7 @@ impl Component {
     }
     pub fn fill_sample(&self) -> String {
         match &self.props {
-            Props::Named(props) => props.inner.fill_sample(),
+            Props::Named(props) => props.inner.sample(),
             Props::Expand(props) => props.fill_sample(),
         }
     }
@@ -61,14 +61,26 @@ pub(super) enum Props {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct NamedProps {
     pub name: String,
-    inner: ObjectType,
+    inner: Type,
 }
 
 impl NamedProps {
     pub fn new(name: impl Into<String>, inner: ObjectType) -> Self {
         Self {
             name: name.into(),
-            inner,
+            inner: Type::Object(inner),
+        }
+    }
+    pub fn new_object_type(name: impl Into<String>, inner: ObjectType) -> Self {
+        Self {
+            name: name.into(),
+            inner: Type::Object(inner),
+        }
+    }
+    pub fn new_intersection_type(name: impl Into<String>, inner: Vec<Type>) -> Self {
+        Self {
+            name: name.into(),
+            inner: Type::Intersection(inner),
         }
     }
     pub fn expand_str(&self) -> String {
@@ -111,33 +123,75 @@ pub(super) struct Key(pub String);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum Type {
-    Number,
-    String,
-    Boolean,
-    Array(Box<Type>),
+    Primitive(PrimitiveType),
     Object(ObjectType),
-    Named(String),
+    Alias(String),
+    Union(Vec<Type>),
+    Intersection(Vec<Type>),
+    Literal(String),
+    Array(Box<Type>),
 }
-
 impl Type {
     pub fn to_str(&self) -> String {
         match self {
-            Type::Number => "number".to_string(),
-            Type::String => "string".to_string(),
-            Type::Boolean => "boolean".to_string(),
-            Type::Array(ty) => format!("{}[]", ty.to_str()),
-            Type::Object(props) => props.to_str(),
-            Type::Named(s) => s.clone(),
+            Self::Primitive(ty) => ty.to_str(),
+            Self::Object(props) => props.to_str(),
+            Self::Alias(s) => s.clone(),
+            Self::Union(tys) => tys
+                .iter()
+                .map(|ty| ty.to_str())
+                .collect::<Vec<String>>()
+                .join(" | "),
+            Self::Intersection(tys) => tys
+                .iter()
+                .map(|ty| ty.to_str())
+                .collect::<Vec<String>>()
+                .join(" & "),
+            Self::Literal(s) => s.clone(),
+            Self::Array(ty) => format!("{}[]", ty.to_str()),
         }
     }
     fn sample(&self) -> String {
         match self {
-            Type::Number => "0".to_string(),
-            Type::String => "\"\"".to_string(),
-            Type::Boolean => "false".to_string(),
-            Type::Array(ty) => format!("[{}]", ty.sample()),
-            Type::Object(props) => props.fill_sample(),
-            Type::Named(s) => "null".to_string(),
+            Self::Primitive(ty) => ty.sample(),
+            Self::Object(props) => props.fill_sample(),
+            Self::Alias(s) => s.clone(),
+            Self::Union(tys) => tys
+                .iter()
+                .map(|ty| ty.sample())
+                .collect::<Vec<String>>()
+                .join(" | "),
+            Self::Intersection(tys) => tys
+                .iter()
+                .map(|ty| ty.sample())
+                .collect::<Vec<String>>()
+                .join(" & "),
+            Self::Literal(s) => s.clone(),
+            Self::Array(ty) => format!("[{}]", ty.sample()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum PrimitiveType {
+    Number,
+    String,
+    Boolean,
+}
+
+impl PrimitiveType {
+    pub fn to_str(&self) -> String {
+        match self {
+            PrimitiveType::Number => "number".to_string(),
+            PrimitiveType::String => "string".to_string(),
+            PrimitiveType::Boolean => "boolean".to_string(),
+        }
+    }
+    fn sample(&self) -> String {
+        match self {
+            PrimitiveType::Number => "0".to_string(),
+            PrimitiveType::String => "\"\"".to_string(),
+            PrimitiveType::Boolean => "false".to_string(),
         }
     }
 }
@@ -151,8 +205,14 @@ mod tests {
     fn test_expand_str() {
         let props = ObjectType {
             inner: vec![
-                (Key("timeOut".to_string()), Type::Number),
-                (Key("errorMessage".to_string()), Type::String),
+                (
+                    Key("timeOut".to_string()),
+                    Type::Primitive(PrimitiveType::Number),
+                ),
+                (
+                    Key("errorMessage".to_string()),
+                    Type::Primitive(PrimitiveType::String),
+                ),
             ]
             .into_iter()
             .collect(),
