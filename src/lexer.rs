@@ -44,7 +44,7 @@ impl Lexer<'_> {
         self.skip_whitespace();
         match self.focus {
             // effect only one char
-            ',' | ';' | '(' | ')' | '{' | '}' | ':' | '#' | '.' | '&' => {
+            ',' | ';' | '(' | ')' | '{' | '}' | ':' | '#' | '.' | '&' | '[' | ']' => {
                 let token = Self::char_to_token(self.focus);
                 self.set_next_char();
                 token

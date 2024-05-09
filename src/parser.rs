@@ -108,17 +108,61 @@ impl ComponentPartsParser<'_> {
                 next = this.lexer.next_token();
             }
         }
+        fn case_lbracket(this: &mut ComponentPartsParser, r#type: Type) -> Type {
+            let mut array_num = 1;
+            let rbracket = this.lexer.next_token();
+            assert_eq!(rbracket.token_type, TSXTokenType::RBracket);
+            this.peek = Some(this.lexer.next_token());
+
+            while let Some(TSXTokenType::LBracket) =
+                this.peek.as_ref().map(|t| t.token_type.clone())
+            {
+                let rbracket = this.lexer.next_token();
+                assert_eq!(rbracket.token_type, TSXTokenType::RBracket);
+                this.peek = Some(this.lexer.next_token());
+                array_num += 1;
+            }
+            let mut type_value = r#type;
+            for _ in 0..array_num {
+                type_value = Type::Array(Box::new(type_value));
+            }
+            match this.peek.as_ref().map(|t| t.token_type.clone()) {
+                Some(TSXTokenType::Semicolon) => {
+                    this.peek = Some(this.lexer.next_token());
+                }
+                Some(TSXTokenType::Comma) => {
+                    this.peek = Some(this.lexer.next_token());
+                }
+                _ => {}
+            }
+            type_value
+        }
 
         // key: type_value_token
         let mut type_value_token = self.lexer.next_token();
+        println!("type_value_token: {:?}", type_value_token);
         match type_value_token.token_type {
             TSXTokenType::Ident => {
-                // < or | or & or ; or } or , or ident(next key) or .
+                // < or | or & or ; or } or , or [ or ident(next key) or .
                 let next = self.lexer.next_token();
                 match next.token_type {
                     TSXTokenType::Ident | TSXTokenType::RCurlyBracket => {
                         self.peek = Some(next);
-                        Type::Alias(type_value_token.literal)
+                        match self.peek.as_ref().map(|t| t.token_type.clone()) {
+                            Some(TSXTokenType::Semicolon) => Type::Alias(type_value_token.literal),
+                            Some(TSXTokenType::Comma) => Type::Alias(type_value_token.literal),
+                            // }
+                            Some(TSXTokenType::RCurlyBracket) => {
+                                Type::Alias(type_value_token.literal)
+                            }
+                            Some(TSXTokenType::LBracket) => {
+                                let type_value = Type::Alias(type_value_token.literal);
+                                case_lbracket(self, type_value)
+                            }
+                            _ => {
+                                todo!("impl some type")
+                            }
+                        }
                     }
                     TSXTokenType::Semicolon | TSXTokenType::Comma => {
                         Type::Alias(type_value_token.literal)
@@ -189,6 +233,38 @@ impl ComponentPartsParser<'_> {
                         add_after_type_literal(self, &mut type_value_token);
                         Type::Alias(type_value_token.literal)
                     }
+                    TSXTokenType::LBracket => {
+                        let mut array_num = 1;
+                        let rbracket = self.lexer.next_token();
+                        assert_eq!(rbracket.token_type, TSXTokenType::RBracket);
+                        self.peek = Some(self.lexer.next_token());
+
+                        while let Some(TSXTokenType::LBracket) =
+                            self.peek.as_ref().map(|t| t.token_type.clone())
+                        {
+                            let rbracket = self.lexer.next_token();
+                            assert_eq!(rbracket.token_type, TSXTokenType::RBracket);
+                            self.peek = Some(self.lexer.next_token());
+                            array_num += 1;
+                        }
+                        let mut type_value = Type::Alias(type_value_token.literal);
+                        for _ in 0..array_num {
+                            type_value = Type::Array(Box::new(type_value));
+                        }
+                        match self.peek.as_ref().map(|t| t.token_type.clone()) {
+                            Some(TSXTokenType::Semicolon) => {
+                                self.peek = Some(self.lexer.next_token());
+                            }
+                            Some(TSXTokenType::Comma) => {
+                                self.peek = Some(self.lexer.next_token());
+                            }
+                            _ => {}
+                        }
+                        println!("array_num: {}", array_num);
+                        println!("type_value: {:?}", type_value);
+                        println!("peek: {:?}", self.peek);
+                        type_value
+                    }
                     _ => {
                         panic!("unexpected token {:?}", next)
                     }
@@ -221,6 +297,26 @@ impl ComponentPartsParser<'_> {
                 let return_type_value = self.get_type_value(0);
                 type_value.push_str(&return_type_value.to_str());
                 Type::Alias(type_value)
+            }
+            // case object
+            TSXTokenType::LCurlyBracket => {
+                let mut obj = ObjectType::new();
+                let mut next = self.lexer.next_token();
+                // TODO nested object
+                while next.token_type != TSXTokenType::RCurlyBracket {
+                    let key = next;
+                    let colon = self.lexer.next_token();
+                    assert_eq!(colon.token_type, TSXTokenType::Colon);
+                    let type_value = self.get_type_value(0);
+                    obj.insert(Key(key.literal), type_value);
+                    next = self.lexer.next_token();
+                }
+                self.peek = Some(self.lexer.next_token());
+                if Some(TSXTokenType::LBracket) == self.peek.as_ref().map(|t| t.token_type.clone())
+                {
+                    return case_lbracket(self, Type::Object(obj));
+                }
+                Type::Object(obj)
             }
             _ => panic!("unexpected token {:?}", type_value_token),
         }
@@ -407,6 +503,118 @@ impl ComponentPartsParser<'_> {
 #[cfg(test)]
 mod tests {
     use crate::component::{Key, NamedProps, ObjectType, Props, Type};
+    #[test]
+    fn test_to_obj_array() {
+        let content = r#"
+import React from "react";
+import { Sentence } from "./Sentence";
+
+export type WordDetailProps = {
+  wordMeaning: string;
+  sentences: {
+    sentence: string;
+    meaning: string;
+  }[];
+  playAudio: () => void;
+};
+
+export const WordDetail = (props: WordDetailProps) => {
+  return (
+    <div>
+      <div>{props.wordMeaning}</div>
+      {props.sentences.map((sentence, index) => {
+        return (
+          <Sentence
+            key={index}
+            sentence={sentence.sentence}
+            meaning={sentence.meaning}
+            playAudio={props.playAudio}
+          />
+        );
+      })}
+    </div>
+  );
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("wordMeaning".to_string()),
+            Type::Alias("string".to_string()),
+        );
+        let mut sentences = ObjectType::new();
+        sentences.insert(
+            Key("sentence".to_string()),
+            Type::Alias("string".to_string()),
+        );
+        sentences.insert(
+            Key("meaning".to_string()),
+            Type::Alias("string".to_string()),
+        );
+        props.insert(
+            Key("sentences".to_string()),
+            Type::Array(Box::new(Type::Object(sentences))),
+        );
+        props.insert(
+            Key("playAudio".to_string()),
+            Type::Alias("() => void".to_string()),
+        );
+        let expect = Component::new(
+            "WordDetail",
+            Props::Named(NamedProps::new_object_type("WordDetailProps", props)),
+        );
+        assert_eq!(component.unwrap(), expect);
+    }
+    #[test]
+    fn test_to_array() {
+        let content = r#"
+import React from "react";
+import { Sentence } from "./Sentence";
+
+export type WordDetailProps = {
+  wordMeanings: string[][];
+  playAudio: () => void;
+};
+
+export const WordDetail = (props: WordDetailProps) => {
+  return (
+    <div>
+      <div>{props.wordMeaning}</div>
+      {props.sentences.map((sentence, index) => {
+        return (
+          <Sentence
+            key={index}
+            sentence={sentence.sentence}
+            meaning={sentence.meaning}
+            playAudio={props.playAudio}
+          />
+        );
+      })}
+    </div>
+  );
+};
+"#;
+        let content = TSXContent(content.to_string());
+        let component = content.to_component();
+        let mut props = ObjectType::new();
+        props.insert(
+            Key("wordMeanings".to_string()),
+            Type::Array(Box::new(Type::Array(Box::new(Type::Alias(
+                "string".to_string(),
+            ))))),
+        );
+        let mut sentences = ObjectType::new();
+        props.insert(
+            Key("playAudio".to_string()),
+            Type::Alias("() => void".to_string()),
+        );
+        let expect = Component::new(
+            "WordDetail",
+            Props::Named(NamedProps::new_object_type("WordDetailProps", props)),
+        );
+        assert_eq!(component.unwrap(), expect);
+    }
     #[test]
     fn test_to_and_type() {
         let content = r#"
